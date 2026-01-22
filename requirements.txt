@@ -1,0 +1,36 @@
+# Flask Framework
+flask
+flask-cors
+flask-jwt-extended
+flask-mail
+flask-swagger-ui
+
+# PostgreSQL & SQLAlchemy
+psycopg2-binary
+SQLAlchemy
+flask-sqlalchemy
+
+# Scheduler
+APScheduler
+
+# Password Hashing
+bcrypt
+
+# OpenAI
+openai
+pydantic
+
+# Image Processing
+Pillow
+
+# HTTP Requests
+requests
+
+# Environment Variables
+python-dotenv
+
+# Utilities
+python-dateutil
+
+# Production server
+gunicorn
