@@ -1,6 +1,6 @@
 """
 PostgreSQL Database Connection using SQLAlchemy
-Replaces MongoDB connection
+Works on both local and Railway environments
 """
 
 from sqlalchemy import create_engine
@@ -13,15 +13,25 @@ from models import Base
 # DATABASE CONNECTION STRING
 # ============================================
 
-# For local development (Windows):
-# Format: postgresql://username:password@localhost:5432/database_name
-POSTGRES_USER = os.environ.get('POSTGRES_USER', 'postgres')
-POSTGRES_PASSWORD = os.environ.get('POSTGRES_PASSWORD', 'sajid123')
-POSTGRES_HOST = os.environ.get('POSTGRES_HOST', 'localhost')
-POSTGRES_PORT = os.environ.get('POSTGRES_PORT', '5432')
-POSTGRES_DB = os.environ.get('POSTGRES_DB', 'kitchen_guardian')
-
-DATABASE_URL = f"postgresql://{POSTGRES_USER}:{POSTGRES_PASSWORD}@{POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}"
+# Check if running on Railway (Railway provides DATABASE_URL)
+# If not, use individual environment variables for local setup
+if os.environ.get('DATABASE_URL'):
+    # Railway environment - use DATABASE_URL directly
+    # Railway's DATABASE_URL starts with postgres:// but SQLAlchemy needs postgresql://
+    DATABASE_URL = os.environ.get('DATABASE_URL')
+    if DATABASE_URL.startswith('postgres://'):
+        DATABASE_URL = DATABASE_URL.replace('postgres://', 'postgresql://', 1)
+    print("🚂 Railway database connection detected")
+else:
+    # Local environment - use individual variables
+    POSTGRES_USER = os.environ.get('POSTGRES_USER', 'postgres')
+    POSTGRES_PASSWORD = os.environ.get('POSTGRES_PASSWORD', 'sajid123')
+    POSTGRES_HOST = os.environ.get('POSTGRES_HOST', 'localhost')
+    POSTGRES_PORT = os.environ.get('POSTGRES_PORT', '5432')
+    POSTGRES_DB = os.environ.get('POSTGRES_DB', 'kitchen_guardian')
+    
+    DATABASE_URL = f"postgresql://{POSTGRES_USER}:{POSTGRES_PASSWORD}@{POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}"
+    print("💻 Local database connection detected")
 
 # ============================================
 # CREATE ENGINE WITH CONNECTION POOLING
@@ -101,5 +111,4 @@ def close_db_session():
 # ============================================
 
 print("✅ PostgreSQL connection established")
-print(f"📊 Database: {POSTGRES_DB}")
-print(f"🔗 Host: {POSTGRES_HOST}:{POSTGRES_PORT}")
+print(f"🔗 Connection URL: {DATABASE_URL.split('@')[0]}@***")  # Hide password in logs

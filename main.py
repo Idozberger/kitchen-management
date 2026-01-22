@@ -16,7 +16,42 @@ try:
     time.tzset()
 except (AttributeError, OSError):
     pass
-# ============================================
+
+from db_connection import engine, get_session
+from models import Base, ConsumptionBaseline
+
+# Check if running on Railway (Railway sets DATABASE_URL or PORT)
+IS_RAILWAY = os.environ.get('DATABASE_URL') or os.environ.get('RAILWAY_ENVIRONMENT')
+
+if IS_RAILWAY:
+    print("\n" + "="*60)
+    print("🚂 Railway environment detected - initializing database...")
+    print("="*60)
+    
+    try:
+        # Create all tables
+        Base.metadata.create_all(engine)
+        print("✅ Database tables created!")
+        
+        # Populate baselines if empty
+        session = get_session()
+        try:
+            baseline_count = session.query(ConsumptionBaseline).count()
+            if baseline_count == 0:
+                print("📊 Populating baseline consumption data...")
+                from utils.consumption_baselines import populate_baselines_to_db
+                populate_baselines_to_db()
+                print("✅ Baselines populated successfully!")
+            else:
+                print(f"✅ Baselines already exist ({baseline_count} records)")
+        finally:
+            session.close()
+    except Exception as e:
+        print(f"❌ Database initialization error: {str(e)}")
+        import traceback
+        traceback.print_exc()
+    
+    print("="*60 + "\n")
 
 from flask import Flask
 from datetime import timedelta
