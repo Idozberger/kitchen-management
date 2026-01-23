@@ -91,13 +91,14 @@ app.config['JWT_SECRET_KEY'] = os.environ['JWT_SECRET']
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(hours=24)
 jwt = JWTManager(app)
 
-app.config['MAIL_SERVER'] = 'smtp.gmail.com'
-app.config['MAIL_PORT'] = 587
-app.config['MAIL_USE_TLS'] = True
-app.config['MAIL_USE_SSL'] = False
-app.config['MAIL_USERNAME'] = 'Kitchensguardian@gmail.com'
-app.config['MAIL_PASSWORD'] = 'clkn vkjq jqvm xznq'
-app.config['MAIL_DEFAULT_SENDER'] = 'Kitchensguardian@gmail.com'
+app.config['MAIL_SERVER'] = os.environ.get('MAIL_SERVER', 'smtp.gmail.com')
+app.config['MAIL_PORT'] = int(os.environ.get('MAIL_PORT', '587'))
+app.config['MAIL_USE_TLS'] = os.environ.get('MAIL_USE_TLS', 'True').lower() == 'true'
+app.config['MAIL_USE_SSL'] = os.environ.get('MAIL_USE_SSL', 'False').lower() == 'true'
+app.config['MAIL_USERNAME'] = os.environ.get('MAIL_USERNAME', 'Kitchensguardian@gmail.com')
+app.config['MAIL_PASSWORD'] = os.environ.get('MAIL_PASSWORD', 'clkn vkjq jqvm xznq')
+app.config['MAIL_DEFAULT_SENDER'] = os.environ.get('MAIL_DEFAULT_SENDER', 
+                                                     os.environ.get('MAIL_USERNAME', 'Kitchensguardian@gmail.com'))
 mail = Mail(app)
 
 # Register blueprints
