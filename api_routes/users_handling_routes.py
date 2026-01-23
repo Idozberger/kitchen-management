@@ -154,7 +154,7 @@ def send_email_verification(email, code):
             from sendgrid.helpers.mail import Mail
             
             message = Mail(
-                from_email='kitchenguardian@noreply.com',  # Can be any email
+                from_email='princemaya26@gmail.com',  # Can be any email
                 to_emails=email,
                 subject='Kitchen Guardian - Email Verification Code',
                 html_content=f"""
