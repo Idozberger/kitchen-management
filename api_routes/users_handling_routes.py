@@ -135,29 +135,74 @@ def verify_user():
 
 
 def send_email_verification(email, code):
-    """Send verification code via email"""
+    """
+    Send verification code via email.
+    Uses Resend API on Railway, SMTP locally.
+    """
+    import os
+    import traceback
+    
     try:
-        # Access the 'mail' instance from the current app context
-        print("ONe")
-        mail = current_app.extensions.get('mail')
-
-        print("Two")
-        if not mail:
-            raise ValueError("Mail extension not found in app context")
-        print("Three")
-        # Create the message object
-        msg = Message(subject="Email Verification Code",
-                      recipients=[email],
-                      body=f"Your verification code is: {code}")
-        print("Four")
-        # Send the email using the Flask-Mail instance
-        mail.send(msg)
-        print("Five")
-        return True
+        # Check if we're on Railway (has RESEND_API_KEY)
+        resend_api_key = os.environ.get('RESEND_API_KEY')
+        
+        if resend_api_key:
+            # ✅ RAILWAY: Use Resend API
+            print(f"📧 Using Resend API to send email to {email}")
+            
+            import resend
+            resend.api_key = resend_api_key
+            
+            params = {
+                "from": "Kitchen Guardian <onboarding@resend.dev>",
+                "to": [email],
+                "subject": "Kitchen Guardian - Email Verification Code",
+                "html": f"""
+                    <!DOCTYPE html>
+                    <html>
+                    <body style="font-family: Arial, sans-serif; padding: 20px;">
+                        <h2>🍳 Kitchen Guardian - Email Verification</h2>
+                        <p>Your verification code is:</p>
+                        <div style="background: #f4f4f4; padding: 15px; font-size: 24px; 
+                                    font-weight: bold; text-align: center; border-radius: 5px; 
+                                    margin: 20px 0;">
+                            {code}
+                        </div>
+                        <p>This code will expire in 10 minutes.</p>
+                        <p style="color: #666;">If you didn't request this code, please ignore this email.</p>
+                    </body>
+                    </html>
+                """
+            }
+            
+            response = resend.Emails.send(params)
+            print(f"✅ Email sent via Resend: {response}")
+            return True
+            
+        else:
+            # ✅ LOCAL: Use SMTP (your existing setup)
+            print(f"📧 Using SMTP to send email to {email}")
+            
+            from flask import current_app
+            from flask_mail import Message
+            
+            mail = current_app.extensions.get('mail')
+            if not mail:
+                raise ValueError("Mail extension not configured")
+            
+            msg = Message(
+                subject="Kitchen Guardian - Email Verification Code",
+                recipients=[email],
+                body=f"Your verification code is: {code}\n\nThis code will expire in 10 minutes."
+            )
+            
+            mail.send(msg)
+            print(f"✅ Email sent via SMTP to {email}")
+            return True
+            
     except Exception as e:
-        # Print the error traceback for better debugging
-        print(f"Error sending email: {e}")
-        print("Traceback: ", traceback.format_exc())
+        print(f"❌ Error sending email: {str(e)}")
+        traceback.print_exc()
         return False
 
 

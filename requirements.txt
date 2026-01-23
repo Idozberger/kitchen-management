@@ -34,3 +34,5 @@ python-dateutil
 
 # Production server
 gunicorn
+
+resend
