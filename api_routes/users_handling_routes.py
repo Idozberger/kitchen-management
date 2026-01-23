@@ -137,27 +137,27 @@ def verify_user():
 def send_email_verification(email, code):
     """
     Send verification code via email.
-    Uses Resend API on Railway, SMTP locally.
+    Uses SendGrid API on Railway, SMTP locally.
     """
     import os
     import traceback
     
     try:
-        # Check if we're on Railway (has RESEND_API_KEY)
-        resend_api_key = os.environ.get('RESEND_API_KEY')
+        # Check if we're on Railway (has SENDGRID_API_KEY)
+        sendgrid_api_key = os.environ.get('SENDGRID_API_KEY')
         
-        if resend_api_key:
-            # ✅ RAILWAY: Use Resend API
-            print(f"📧 Using Resend API to send email to {email}")
+        if sendgrid_api_key:
+            # ✅ RAILWAY: Use SendGrid API
+            print(f"📧 Using SendGrid API to send email to {email}")
             
-            import resend
-            resend.api_key = resend_api_key
+            from sendgrid import SendGridAPIClient
+            from sendgrid.helpers.mail import Mail
             
-            params = {
-                "from": "Kitchen Guardian <onboarding@resend.dev>",
-                "to": [email],
-                "subject": "Kitchen Guardian - Email Verification Code",
-                "html": f"""
+            message = Mail(
+                from_email='kitchenguardian@noreply.com',  # Can be any email
+                to_emails=email,
+                subject='Kitchen Guardian - Email Verification Code',
+                html_content=f"""
                     <!DOCTYPE html>
                     <html>
                     <body style="font-family: Arial, sans-serif; padding: 20px;">
@@ -173,14 +173,15 @@ def send_email_verification(email, code):
                     </body>
                     </html>
                 """
-            }
+            )
             
-            response = resend.Emails.send(params)
-            print(f"✅ Email sent via Resend: {response}")
+            sg = SendGridAPIClient(sendgrid_api_key)
+            response = sg.send(message)
+            print(f"✅ Email sent via SendGrid. Status: {response.status_code}")
             return True
             
         else:
-            # ✅ LOCAL: Use SMTP (your existing setup)
+            # ✅ LOCAL: Use SMTP
             print(f"📧 Using SMTP to send email to {email}")
             
             from flask import current_app
