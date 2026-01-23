@@ -128,8 +128,15 @@ def swagger_json():
     from flask import jsonify, request
     import inspect
     
-    # Detect if request is HTTP or HTTPS
-    scheme = 'https' if request.is_secure else 'http'
+    # ✅ FIXED: Properly detect HTTPS on Railway
+    if os.environ.get('DATABASE_URL') or os.environ.get('RAILWAY_ENVIRONMENT'):
+        scheme = 'https'  # Railway always uses HTTPS
+    elif request.headers.get('X-Forwarded-Proto') == 'https':
+        scheme = 'https'  # Behind HTTPS proxy
+    elif request.is_secure:
+        scheme = 'https'  # Direct HTTPS
+    else:
+        scheme = 'http'   # Local development
     
     swagger_spec = {
         "swagger": "2.0",
@@ -139,7 +146,7 @@ def swagger_json():
             "version": "1.0.0"
         },
         "basePath": "/",
-        "schemes": [scheme],  # <-- Only use the current scheme
+        "schemes": [scheme],  # ✅ Now correctly uses HTTPS on Railway
         "securityDefinitions": {
             "Bearer": {
                 "type": "apiKey",
