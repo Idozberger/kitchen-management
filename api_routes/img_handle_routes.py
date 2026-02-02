@@ -1,12 +1,18 @@
+"""
+UPDATED Image Handling Routes
+Now uses Google Document AI + OpenAI for SUPERIOR receipt scanning
+"""
+
 from flask_jwt_extended import jwt_required, get_jwt_identity, get_jwt
 from flask import Blueprint, request, jsonify, url_for
 import os
 from werkzeug.utils import secure_filename
 import uuid
-import utils.gpt_vision
-from random import randint
 import json
 from datetime import datetime, timezone
+
+# NEW: Advanced scanning imports
+from utils.advanced_receipt_scanner import AdvancedReceiptScanner
 
 # PostgreSQL imports
 from db_connection import get_session, engine
@@ -26,6 +32,17 @@ if not os.path.exists(UPLOAD_FOLDER):
 
 # Limit the size of the uploaded file to 10MB
 MAX_CONTENT_LENGTH = 10 * 1024 * 1024  # 10MB
+
+# Initialize the advanced scanner (singleton)
+advanced_scanner = None
+
+
+def get_advanced_scanner():
+    """Get or create advanced scanner instance"""
+    global advanced_scanner
+    if advanced_scanner is None:
+        advanced_scanner = AdvancedReceiptScanner()
+    return advanced_scanner
 
 
 def allowed_file(filename):
@@ -91,8 +108,28 @@ def store_scan_history(user_id, scanned_items):
 @img_api_blueprint.route('/api/scan_recipt', methods=['POST'])
 @jwt_required()
 def scan_recipt_r():
-    """Scan receipt using OpenAI Vision API"""
-    print("Request incoming....")
+    """
+    NEW ADVANCED RECEIPT SCANNING with TWO MODES
+    Uses Google Document AI + OpenAI GPT-4 OR OpenAI Vision directly
+    
+    Request Parameters (form-data):
+    - file: Receipt image (required)
+    - currency: Currency code (optional, default: USD)
+    - country: Country code (optional, default: USA)  
+    - use_google_document: "true" or "false" (optional, default: "true")
+      * "true" = Google Document AI + OpenAI Enhancement
+      * "false" = OpenAI Vision Direct Analysis
+    
+    Returns:
+    {
+        "success": true,
+        "mode": "Google Document AI" or "OpenAI Vision",
+        "merchant": "Store Name",
+        "total_items": 10,
+        "items": [...]
+    }
+    """
+    print("🔍 Advanced Receipt Scanning Request Incoming...")
 
     user_identity = get_jwt()
     user_id = user_identity['user_id']
@@ -114,34 +151,84 @@ def scan_recipt_r():
     if file.filename == '':
         return jsonify({'error': 'No selected file'}), 400
 
-    if file and allowed_file(file.filename):
-        filename = secure_filename(file.filename)
-        unique_filename = f"{uuid.uuid4().hex}_{filename}"
-        print("Unique filename: ", unique_filename)
-        file_path = os.path.join(UPLOAD_FOLDER, unique_filename)
-        file.save(file_path)
-
-        res = utils.gpt_vision.analyze_image_with_openai(file_path)
-        os.remove(file_path)
-        
-        try:
-            print("res", type(res), res)
-            parsed_json = json.loads(res)
-        except Exception as e:
-            print("error when converting response to json: ", e)
-            return jsonify({'error': "Couldn't Scan anything in the given image."}), 400
-
-        items_list = parsed_json.get('items', [])
-        store_scan_history(user_id, items_list)
-
-        return jsonify({
-            'message': 'File successfully uploaded',
-            'res': parsed_json
-        }), 200
-    else:
+    if not (file and allowed_file(file.filename)):
         return jsonify({
             'error': 'File type not allowed. Only images (png, jpg, jpeg) are accepted.'
         }), 400
+
+    try:
+        # Get optional parameters
+        currency = request.form.get('currency', 'USD').upper()
+        country = request.form.get('country', 'USA').upper()
+        use_google_document = request.form.get('use_google_document', 'true').lower() == 'true'
+        
+        print(f"   Currency: {currency}, Country: {country}")
+        print(f"   Mode: {'Google Document AI' if use_google_document else 'OpenAI Vision'}")
+        
+        # Save file temporarily
+        filename = secure_filename(file.filename)
+        unique_filename = f"{uuid.uuid4().hex}_{filename}"
+        file_path = os.path.join(UPLOAD_FOLDER, unique_filename)
+        file.save(file_path)
+        
+        print(f"   Saved to: {file_path}")
+
+        # Read image bytes
+        with open(file_path, 'rb') as f:
+            image_bytes = f.read()
+        
+        # Detect MIME type
+        mime_type = 'image/jpeg'
+        if filename.lower().endswith('.png'):
+            mime_type = 'image/png'
+        
+        # NEW: Use advanced scanner with mode selection
+        scanner = get_advanced_scanner()
+        result = scanner.scan_receipt(
+            image_bytes=image_bytes,
+            mime_type=mime_type,
+            currency=currency,
+            country=country,
+            use_google_document=use_google_document
+        )
+        
+        # Clean up temp file
+        os.remove(file_path)
+        print(f"   Cleaned up: {file_path}")
+        
+        if not result['success']:
+            return jsonify({
+                'error': f"Scanning failed: {result.get('error', 'Unknown error')}"
+            }), 400
+        
+        # Store in scan history
+        items_list = result['items']
+        store_scan_history(user_id, items_list)
+        
+        print(f"✅ Successfully scanned {result['total_items']} items")
+        
+        return jsonify({
+            'message': 'Receipt successfully scanned!',
+            'success': True,
+            'mode': 'Google Document AI' if use_google_document else 'OpenAI Vision',
+            'merchant': result.get('merchant', 'Unknown'),
+            'currency': currency,
+            'total_items': result['total_items'],
+            'items': items_list,
+            'metadata': result.get('metadata', {}),
+            'scan_timestamp': result.get('scan_timestamp')
+        }), 200
+        
+    except Exception as e:
+        print(f"❌ Scanning error: {str(e)}")
+        # Clean up file if it exists
+        if 'file_path' in locals() and os.path.exists(file_path):
+            os.remove(file_path)
+        
+        return jsonify({
+            'error': f'Error scanning receipt: {str(e)}',
+            'success': False
+        }), 500
 
 
 @img_api_blueprint.route('/api/get_scan_history', methods=['GET'])

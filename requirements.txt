@@ -17,7 +17,7 @@ APScheduler
 bcrypt
 
 # OpenAI
-openai
+openai>=1.0.0
 pydantic
 
 # Image Processing
@@ -36,3 +36,8 @@ python-dateutil
 gunicorn
 
 sendgrid
+
+google-cloud-documentai
+google-auth
+google-auth-oauthlib
+google-auth-httplib2

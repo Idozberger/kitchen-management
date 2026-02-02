@@ -9,6 +9,7 @@ from flask import Blueprint, request, jsonify, url_for
 from datetime import datetime, timezone, timedelta
 import uuid
 from random import randint
+from utils.gpt_vision import generate_food_thumbnail
 
 # PostgreSQL imports
 from db_connection import get_session
@@ -778,12 +779,40 @@ def add_items_to_kitchen():
             
             if existing_item:
                 existing_item.quantity += new_item_quantity
+                
+                # Handle thumbnail - generate if not provided
                 if new_item.get('thumbnail'):
                     existing_item.thumbnail = new_item['thumbnail']
+                elif not existing_item.thumbnail:
+                    # Only generate if item doesn't already have a thumbnail
+                    print(f"📸 Generating thumbnail for existing item: {new_item['name']}")
+                    try:
+                        generated_thumb = generate_food_thumbnail(new_item['name'])
+                        if generated_thumb:
+                            existing_item.thumbnail = f"data:image/png;base64,{generated_thumb}"
+                            print(f"   ✅ Thumbnail generated successfully")
+                    except Exception as e:
+                        print(f"   ❌ Error generating thumbnail: {str(e)}")
+                
                 if new_item.get('expiry_date'):
                     existing_item.expiry_date = new_item['expiry_date']
                     existing_item.added_at = datetime.now(timezone.utc)
             else:
+                # Generate thumbnail if not provided
+                thumbnail = new_item.get('thumbnail')
+                if not thumbnail:
+                    print(f"📸 Generating thumbnail for: {new_item['name']}")
+                    try:
+                        generated_thumb = generate_food_thumbnail(new_item['name'])
+                        if generated_thumb:
+                            thumbnail = f"data:image/png;base64,{generated_thumb}"
+                            print(f"   ✅ Thumbnail generated successfully")
+                        else:
+                            print(f"   ⚠️ Thumbnail generation failed, using None")
+                    except Exception as e:
+                        print(f"   ❌ Error generating thumbnail: {str(e)}")
+                        thumbnail = None
+                
                 kitchen_item = KitchenItem(
                     item_id=uuid.uuid4().hex,
                     kitchen_id=kitchen_id,
@@ -791,7 +820,7 @@ def add_items_to_kitchen():
                     quantity=new_item_quantity,
                     unit=new_item['unit'],
                     group=new_item_group,
-                    thumbnail=new_item.get('thumbnail'),
+                    thumbnail=thumbnail, 
                     expiry_date=new_item.get('expiry_date'),
                     added_at=datetime.now(timezone.utc)
                 )

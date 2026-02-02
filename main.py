@@ -1024,17 +1024,66 @@ def swagger_json():
         '/api/scan_recipt': {
             'POST': {
                 'consumes': ['multipart/form-data'],
-                'parameters': [{
-                    'name': 'file',
-                    'in': 'formData',
-                    'type': 'file',
-                    'required': True,
-                    'description': 'Receipt image (PNG, JPG, JPEG - max 10MB)'
-                }],
+                'parameters': [
+                    {
+                        'name': 'file',
+                        'in': 'formData',
+                        'type': 'file',
+                        'required': True,
+                        'description': 'Receipt image (PNG, JPG, JPEG - max 10MB)'
+                    },
+                    {
+                        'name': 'currency',
+                        'in': 'formData',
+                        'type': 'string',
+                        'required': False,
+                        'default': 'USD',
+                        'description': 'Currency code (e.g., USD, EUR). Default: USD'
+                    },
+                    {
+                        'name': 'country',
+                        'in': 'formData',
+                        'type': 'string',
+                        'required': False,
+                        'default': 'USA',
+                        'description': 'Country code (e.g., USA, GBR). Default: USA'
+                    },
+                    {
+                        'name': 'use_google_document',
+                        'in': 'formData',
+                        'type': 'boolean',
+                        'required': False,
+                        'default': True,
+                        'description': (
+                            'Select scanning mode. '
+                            'true = Google Document AI + OpenAI enhancement, '
+                            'false = OpenAI Vision direct.'
+                        )
+                    }
+                ],
                 'tags': ['Receipt Scanning'],
-                'security': [{'Bearer': []}]
+                'security': [{'Bearer': []}],
+                'responses': {
+                    '200': {
+                        'description': 'Receipt successfully scanned'
+                    },
+                    '400': {
+                        'description': 'Bad request / scanning failed'
+                    },
+                    '403': {
+                        'description': 'Not authorized (host/co-host only)'
+                    },
+                    '413': {
+                        'description': 'File too large (>10MB)'
+                    },
+                    '500': {
+                        'description': 'Server error'
+                    }
+                }
             }
         },
+
+
         '/api/get_scan_history': {
             'GET': {
                 'parameters': [{
