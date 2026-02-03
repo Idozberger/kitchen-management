@@ -871,7 +871,7 @@ def respond_to_confirmation():
                     bucket_type='mylist',
                     user_id=user_id,
                     created_at=current_time,
-                    updated_at=current_time,
+                    modified_at=current_time,
                     auto_added=True
                 )
                 session.add(shopping_item)
