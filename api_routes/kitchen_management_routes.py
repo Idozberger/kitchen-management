@@ -762,14 +762,25 @@ def add_items_to_kitchen():
 
         for new_item in items:
             new_item_name = new_item['name'].strip().lower()
-            new_item_unit = new_item.get('unit', 'count').strip().lower() if new_item.get('unit') else 'count'
+            
+            # Handle optional unit - default to 'count' if not provided
+            unit_value = new_item.get('unit')
+            if unit_value and isinstance(unit_value, str) and unit_value.strip():
+                new_item_unit = unit_value.strip().lower()
+            else:
+                new_item_unit = 'count'
+            
             new_item_group = new_item.get('group', '').strip().lower() or "pantry"
             
-            # Use default quantity of 1 if not provided
-            try:
-                new_item_quantity = float(new_item.get('quantity', 1))
-            except (ValueError, TypeError):
-                return jsonify({'error': f"Invalid quantity for '{new_item['name']}'"}), 400
+            # Handle optional quantity - default to 1 if not provided
+            quantity_value = new_item.get('quantity')
+            if quantity_value is not None:
+                try:
+                    new_item_quantity = float(quantity_value)
+                except (ValueError, TypeError):
+                    return jsonify({'error': f"Invalid quantity for '{new_item['name']}'"}), 400
+            else:
+                new_item_quantity = 1.0
             
             existing_item = session.query(KitchenItem).filter(
                 KitchenItem.kitchen_id == kitchen_id,
@@ -819,7 +830,7 @@ def add_items_to_kitchen():
                     kitchen_id=kitchen_id,
                     name=new_item['name'],
                     quantity=new_item_quantity,
-                    unit=new_item['unit'],
+                    unit=new_item_unit,
                     group=new_item_group,
                     thumbnail=thumbnail, 
                     expiry_date=new_item.get('expiry_date'),
