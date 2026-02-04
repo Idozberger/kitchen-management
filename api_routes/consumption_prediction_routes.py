@@ -824,16 +824,15 @@ def respond_to_confirmation():
         if not kitchen:
             return jsonify({'error': 'Kitchen not found'}), 404
         
-        is_member = (
-            kitchen.host_id == user_id or
-            session.query(KitchenMember).filter(
-                KitchenMember.kitchen_id == confirmation.kitchen_id,
-                KitchenMember.user_id == user_id
-            ).first() is not None
-        )
-        
-        if not is_member:
-            return jsonify({'error': 'You are not a member of this kitchen'}), 403
+        is_host = kitchen.host_id == user_id
+        is_co_host = session.query(KitchenMember).filter(
+            KitchenMember.kitchen_id == confirmation.kitchen_id,
+            KitchenMember.user_id == user_id,
+            KitchenMember.member_type == 'co-host'
+        ).first() is not None
+
+        if not (is_host or is_co_host):
+            return jsonify({'error': 'Only host or co-host can respond to consumption confirmations'}), 403
         
         current_time = datetime.now(timezone.utc)
         

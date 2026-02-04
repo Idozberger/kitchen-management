@@ -757,17 +757,18 @@ def add_items_to_kitchen():
             return jsonify({'error': 'Only the host or co-hosts can add items to this kitchen'}), 403
         
         for item in items:
-            if not all(key in item for key in ['name', 'quantity', 'unit']):
-                return jsonify({'error': 'Each item must have a name, quantity, and unit'}), 400
-        
+            if 'name' not in item or not item['name']:
+                return jsonify({'error': 'Each item must have a name'}), 400
+
         for new_item in items:
             new_item_name = new_item['name'].strip().lower()
-            new_item_unit = new_item['unit'].strip().lower()
+            new_item_unit = new_item.get('unit', 'count').strip().lower() if new_item.get('unit') else 'count'
             new_item_group = new_item.get('group', '').strip().lower() or "pantry"
             
+            # Use default quantity of 1 if not provided
             try:
-                new_item_quantity = float(new_item['quantity'])
-            except ValueError:
+                new_item_quantity = float(new_item.get('quantity', 1))
+            except (ValueError, TypeError):
                 return jsonify({'error': f"Invalid quantity for '{new_item['name']}'"}), 400
             
             existing_item = session.query(KitchenItem).filter(
@@ -1312,15 +1313,16 @@ def set_kitchen_date_range():
         if not kitchen:
             return jsonify({'error': 'Kitchen not found'}), 404
         
-        is_host = kitchen.host_id == user_id
-        is_co_host = session.query(KitchenMember).filter(
-            KitchenMember.kitchen_id == kitchen_id,
-            KitchenMember.user_id == user_id,
-            KitchenMember.member_type == 'co-host'
-        ).first() is not None
-        
-        if not (is_host or is_co_host):
-            return jsonify({'error': 'Only host or co-host can set kitchen date range'}), 403
+        is_member = (
+            kitchen.host_id == user_id or
+            session.query(KitchenMember).filter(
+                KitchenMember.kitchen_id == kitchen_id,
+                KitchenMember.user_id == user_id
+            ).first() is not None
+        )
+
+        if not is_member:
+            return jsonify({'error': 'You are not a member of this kitchen'}), 403
         
         try:
             start_date_obj = datetime.strptime(start_date, '%Y-%m-%d').replace(tzinfo=timezone.utc)
