@@ -1766,17 +1766,16 @@ def get_all_mylist_items():
         if not kitchen:
             return jsonify({'error': 'Kitchen not found'}), 404
         
-        is_authorized = (
+        is_member = (
             kitchen.host_id == user_id or
             session.query(KitchenMember).filter(
                 KitchenMember.kitchen_id == kitchen_id,
-                KitchenMember.user_id == user_id,
-                KitchenMember.member_type == 'co-host'
+                KitchenMember.user_id == user_id
             ).first() is not None
         )
-        
-        if not is_authorized:
-            return jsonify({'error': 'Unauthorized access'}), 403
+
+        if not is_member:
+            return jsonify({'error': 'You are not a member of this kitchen'}), 403
         
         query = session.query(MyList).filter(MyList.kitchen_id == kitchen_id)
         if bucket_type in ['requested', 'mylist']:
