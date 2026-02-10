@@ -88,7 +88,7 @@ CORS(app, resources={
 })
 
 app.config['JWT_SECRET_KEY'] = os.environ['JWT_SECRET']
-app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(days=30)
+app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(days=7)
 jwt = JWTManager(app)
 
 app.config['MAIL_SERVER'] = os.environ.get('MAIL_SERVER', 'smtp.gmail.com')
