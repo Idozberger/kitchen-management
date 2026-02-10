@@ -1053,7 +1053,7 @@ def swagger_json():
                         'in': 'formData',
                         'type': 'boolean',
                         'required': False,
-                        'default': False,
+                        'default': True,
                         'description': (
                             'Select scanning mode. '
                             'true = Google Document AI + OpenAI enhancement, '
