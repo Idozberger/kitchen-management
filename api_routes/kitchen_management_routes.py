@@ -10,6 +10,7 @@ from datetime import datetime, timezone, timedelta
 import uuid
 from random import randint
 from utils.gpt_vision import generate_food_thumbnail
+from utils.expiry_calculator import calculate_item_expiry
 
 # PostgreSQL imports
 from db_connection import get_session
@@ -797,33 +798,73 @@ def add_items_to_kitchen():
                     existing_item.thumbnail = new_item['thumbnail']
                 elif not existing_item.thumbnail:
                     # Only generate if item doesn't already have a thumbnail
-                    print(f"📸 Generating thumbnail for existing item: {new_item['name']}")
+                    print(f"ðŸ“¸ Generating thumbnail for existing item: {new_item['name']}")
                     try:
                         generated_thumb = generate_food_thumbnail(new_item['name'])
                         if generated_thumb:
                             existing_item.thumbnail = f"data:image/png;base64,{generated_thumb}"
-                            print(f"   ✅ Thumbnail generated successfully")
+                            print(f"   âœ… Thumbnail generated successfully")
                     except Exception as e:
-                        print(f"   ❌ Error generating thumbnail: {str(e)}")
+                        print(f"   âŒ Error generating thumbnail: {str(e)}")
                 
+                # ============================================
+                # AUTO-CALCULATE EXPIRY DATE IF NOT PROVIDED
+                # ============================================
                 if new_item.get('expiry_date'):
+                    # User provided expiry date - use it
                     existing_item.expiry_date = new_item['expiry_date']
                     existing_item.added_at = datetime.now(timezone.utc)
+                    print(f"   ✅ Using provided expiry: {new_item['expiry_date']}")
+                else:
+                    # No expiry provided - calculate automatically
+                    print(f"   🔍 No expiry provided for '{new_item['name']}', calculating...")
+                    try:
+                        auto_expiry = calculate_item_expiry(new_item['name'], new_item_group)
+                        if auto_expiry:
+                            existing_item.expiry_date = auto_expiry
+                            existing_item.added_at = datetime.now(timezone.utc)
+                            print(f"   ✅ Auto-calculated expiry: {auto_expiry}")
+                        else:
+                            print(f"   ⚠️ Could not calculate expiry, keeping existing")
+                    except Exception as e:
+                        print(f"   ❌ Error calculating expiry: {str(e)}")
+                # ============================================
             else:
                 # Generate thumbnail if not provided
                 thumbnail = new_item.get('thumbnail')
                 if not thumbnail:
-                    print(f"📸 Generating thumbnail for: {new_item['name']}")
+                    print(f"ðŸ“¸ Generating thumbnail for: {new_item['name']}")
                     try:
                         generated_thumb = generate_food_thumbnail(new_item['name'])
                         if generated_thumb:
                             thumbnail = f"data:image/png;base64,{generated_thumb}"
-                            print(f"   ✅ Thumbnail generated successfully")
+                            print(f"   âœ… Thumbnail generated successfully")
                         else:
-                            print(f"   ⚠️ Thumbnail generation failed, using None")
+                            print(f"   âš ï¸ Thumbnail generation failed, using None")
                     except Exception as e:
-                        print(f"   ❌ Error generating thumbnail: {str(e)}")
+                        print(f"   âŒ Error generating thumbnail: {str(e)}")
                         thumbnail = None
+                
+                # ============================================
+                # AUTO-CALCULATE EXPIRY DATE IF NOT PROVIDED
+                # ============================================
+                expiry_date_value = new_item.get('expiry_date')
+                
+                if not expiry_date_value:
+                    # No expiry provided - calculate automatically
+                    print(f"   🔍 No expiry provided for new item '{new_item['name']}', calculating...")
+                    try:
+                        auto_expiry = calculate_item_expiry(new_item['name'], new_item_group)
+                        if auto_expiry:
+                            expiry_date_value = auto_expiry
+                            print(f"   ✅ Auto-calculated expiry: {auto_expiry}")
+                        else:
+                            print(f"   ⚠️ Could not calculate expiry, leaving empty")
+                    except Exception as e:
+                        print(f"   ❌ Error calculating expiry: {str(e)}")
+                else:
+                    print(f"   ✅ Using provided expiry: {expiry_date_value}")
+                # ============================================
                 
                 kitchen_item = KitchenItem(
                     item_id=uuid.uuid4().hex,
@@ -833,7 +874,7 @@ def add_items_to_kitchen():
                     unit=new_item_unit,
                     group=new_item_group,
                     thumbnail=thumbnail, 
-                    expiry_date=new_item.get('expiry_date'),
+                    expiry_date=expiry_date_value,
                     added_at=datetime.now(timezone.utc)
                 )
                 session.add(kitchen_item)

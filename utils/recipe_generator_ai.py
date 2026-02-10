@@ -12,42 +12,40 @@ _model = "gpt-4o-mini"
 # _model = "gpt-4o-mini"
 
 INSTRUCTIONS = """
-You are tasked with generating recipes based solely on the ingredients provided by the user. Follow these instructions precisely:
+Generate 3 recipes using provided ingredients. Follow these rules:
 
 1. The user will provide:
-   - A list of available ingredients.
+   - A list of available ingredients with name, quantity, and unit.
    - Instructions indicating what type of dish they want, e.g., spicy, sweet, salty, bitter, sour, bland, etc. If no preference is provided, assume no specific flavor direction is desired.
-   
-2. Your job is to:
-   - Create three recipes. One recipe must use only the ingredients provided by the user. The other two recipes can have a single or very few ingredients which are not originally present in the available ingredients, but in that case missing_items will be true.
-   - Provide a recipe title.
-   - Estimate the calories per 100g of the dish.
-   - Include a cooking time range (e.g., 20-30 minutes).
-   - Provide a detailed list of ingredients with amounts and units.
-   
-3. CRITICAL UNIT REQUIREMENTS:
-   - ONLY use these units: grams, kg, litre, ml, count
-   - Use the EXACT SAME unit as in the available ingredients list
-   - If available ingredient is in kg, use kg (e.g., 0.5 kg, NOT 500 grams)
-   - If available ingredient is in litre, use litre (e.g., 0.2 litre, NOT 200 ml)
-   - If available ingredient is in grams, use grams
-   - If available ingredient is in ml, use ml
-   - For countable items (eggs, apples), use count
-   - DO NOT convert units - match exactly what's in the available ingredients
-   
-4. CRITICAL NAME MATCHING:
-   - Use the EXACT spelling from available ingredients list
-   - If available ingredients has 'chiken', use 'chiken' (not 'chicken')
-   - If available ingredients has 'tomatoe', use 'tomatoe' (not 'tomato')
-   - Match capitalization exactly as provided
-   
-5. Recipe Requirements:
-   - Write a short summary of the cooking steps.
-   - List the complete cooking steps in clear & detailed manner that will guide the user step-by-step.
-   - Make steps very easy to follow with all necessary details.
-   - IMPORTANT: For missing_items_list, include ONLY the ingredients that are NOT in the available ingredients list. Format each missing item with name, amount, and unit (using only allowed units: grams, kg, litre, ml, count).
 
-REMEMBER: Use ONLY these units: grams, kg, litre, ml, count. Never use pounds, ounces, mL, or any other units.
+2. RECIPE STRUCTURE:
+   - Recipe #1: Use ONLY available ingredients and provide best recipe (no missing items)
+   - Recipes #2-3: May include missing ingredients if needed to produce a best recipe
+   - Each recipe needs: title, calories, cooking_time, ingredients, summary, steps
+
+3. CALORIES - CRITICAL FORMAT:
+   - Always specify "per serving" with serving count
+   - Format: "X cal per serving (Y servings)" 
+   - Example: "450 cal per serving (4 servings)"
+   - This is MANDATORY - never just say "450 cal"
+
+4. UNITS (strict):
+   - Only use: grams, kg, litre, ml, count
+   - Match the unit from available ingredients (i.e if ingredient is in kg, use kg not grams)
+
+5. INGREDIENT MATCHING (flexible):
+   When checking if ingredient is available, ignore case/plurals/descriptors:
+   - "Chicken Breast" matches "chicken" ✓
+   - "Tomatoes" matches "tomato" ✓  
+   - "GARLIC" matches "garlic" ✓
+   - "Fresh Spinach" matches "spinach" ✓
+
+6. MISSING ITEMS:
+   Only mark as missing if it's a DIFFERENT ingredient entirely
+   - "Chicken Breast" available → "chicken" needed = NOT missing ✓
+   - "Chicken" available → "soy sauce" needed = IS missing ✗
+
+Double-check: Don't mark ingredients as missing when they're available in any form!
 """
 
 
@@ -58,14 +56,14 @@ class ingredientsList(BaseModel):
 
 
 class Recipe(BaseModel):
-    title: str = Field(..., example="Chow Mein")
-    calories: str = Field(..., example="110 cal")
-    cooking_time: str = Field(..., example="10-15 mins")
+    title: str = Field(..., example="Chicken Stir Fry")
+    calories: str = Field(..., example="450 cal per serving (4 servings)", description="Must include 'per serving' and serving count")
+    cooking_time: str = Field(..., example="20-30 mins")
     ingredients: list[ingredientsList]
     recipe_short_summary: str = Field(
-        ..., example="Brown the beef better. Lean ground...")
+        ..., example="Quick and healthy stir fry with tender chicken and vegetables")
     cooking_steps: list[str] = Field(
-        ..., example=["Brown the beef in the oven", 'add 2 spoon oil'])
+        ..., example=["Heat oil in a wok", "Add chicken and cook until golden"])
     missing_items: bool = Field(..., example=False)
     missing_items_list: list[ingredientsList] = Field(default=[], example=[])
 
@@ -79,6 +77,12 @@ def generate_recipes_with_openai(user_instructions, available_ingredients):
 
     try:
         recipes = []
+        
+        # Format available ingredients clearly
+        ingredients_text = "AVAILABLE INGREDIENTS:\n"
+        for idx, item in enumerate(available_ingredients, 1):
+            ingredients_text += f"{idx}. {item['name']} - {item['quantity']} {item['unit']}\n"
+        
         completion = client.beta.chat.completions.parse(
             model=_model,
             messages=[
@@ -87,14 +91,19 @@ def generate_recipes_with_openai(user_instructions, available_ingredients):
                     "content": INSTRUCTIONS
                 },
                 {
-                    "role":
-                    "user",
-                    "content":
-                    f"""
-                    instructions: {user_instructions}\nGenerate the recipe. Make sure to use exactly the same unit as in the available ingredients list. Ig something is in KG and you suggest to use half kg then you must use 0.5 KG, not 500g.
-                    Available ingredients:
-                    {available_ingredients}
-                    """
+                    "role": "user",
+                    "content": f"""User wants: {user_instructions}
+
+{ingredients_text}
+Generate 3 recipes:
+- Recipe 1: Only use ingredients above (no missing items)
+- Recipes 2-3: Can include missing ingredients
+
+Remember:
+• Calories format: "X cal per serving (Y servings)"
+• Match ingredients flexibly (ignore case/plurals/descriptors)
+• Use same units as available ingredients
+"""
                 },
             ],
             response_format=RecipeResponse,
