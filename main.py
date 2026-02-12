@@ -644,6 +644,52 @@ def swagger_json():
                 'security': [{'Bearer': []}]
             }
         },
+        '/api/kitchen/demote_cohost': {
+            'POST': {
+                'summary': 'Demote co-host to member',
+                'description': 'Demote a co-host back to regular member status. Only the kitchen host can perform this action.',
+                'parameters': [{
+                    'name': 'body',
+                    'in': 'body',
+                    'required': True,
+                    'schema': {
+                        'type': 'object',
+                        'required': ['kitchen_id', 'member_id'],
+                        'properties': {
+                            'kitchen_id': {
+                                'type': 'string', 
+                                'example': '1',
+                                'description': 'The ID of the kitchen'
+                            },
+                            'member_id': {
+                                'type': 'string', 
+                                'example': '2',
+                                'description': 'The ID of the co-host member to demote'
+                            }
+                        }
+                    }
+                }],
+                'tags': ['Kitchen Management'],
+                'security': [{'Bearer': []}],
+                'responses': {
+                    '200': {
+                        'description': 'Co-host successfully demoted to member'
+                    },
+                    '400': {
+                        'description': 'Invalid kitchen ID or member ID'
+                    },
+                    '403': {
+                        'description': 'Only the host can demote co-hosts'
+                    },
+                    '404': {
+                        'description': 'Kitchen or member not found'
+                    },
+                    '409': {
+                        'description': 'Member is not a co-host'
+                    }
+                }
+            }
+        },
         '/api/kitchen/leave': {
             'POST': {
                 'parameters': [{

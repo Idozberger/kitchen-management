@@ -136,73 +136,123 @@ def verify_user():
 
 def send_email_verification(email, code):
     """
-    Send verification code via email.
-    Uses SendGrid API on Railway, SMTP locally.
+    Send verification code via email using SendGrid API.
+    Works for both local and production environments.
     """
     import os
     import traceback
     
     try:
-        # Check if we're on Railway (has SENDGRID_API_KEY)
+        # Get SendGrid API key from environment
         sendgrid_api_key = os.environ.get('SENDGRID_API_KEY')
         
-        if sendgrid_api_key:
-            # ✅ RAILWAY: Use SendGrid API
-            print(f"📧 Using SendGrid API to send email to {email}")
-            
-            from sendgrid import SendGridAPIClient
-            from sendgrid.helpers.mail import Mail
-            
-            message = Mail(
-                from_email='princemaya26@gmail.com',  # Can be any email
-                to_emails=email,
-                subject='Kitchen Guardian - Email Verification Code',
-                html_content=f"""
-                    <!DOCTYPE html>
-                    <html>
-                    <body style="font-family: Arial, sans-serif; padding: 20px;">
-                        <h2>🍳 Kitchen Guardian - Email Verification</h2>
-                        <p>Your verification code is:</p>
-                        <div style="background: #f4f4f4; padding: 15px; font-size: 24px; 
-                                    font-weight: bold; text-align: center; border-radius: 5px; 
-                                    margin: 20px 0;">
-                            {code}
-                        </div>
-                        <p>This code will expire in 10 minutes.</p>
-                        <p style="color: #666;">If you didn't request this code, please ignore this email.</p>
-                    </body>
-                    </html>
-                """
-            )
-            
-            sg = SendGridAPIClient(sendgrid_api_key)
-            response = sg.send(message)
-            print(f"✅ Email sent via SendGrid. Status: {response.status_code}")
-            return True
-            
-        else:
-            # ✅ LOCAL: Use SMTP
-            print(f"📧 Using SMTP to send email to {email}")
-            
-            from flask import current_app
-            from flask_mail import Message
-            
-            mail = current_app.extensions.get('mail')
-            if not mail:
-                raise ValueError("Mail extension not configured")
-            
-            msg = Message(
-                subject="Kitchen Guardian - Email Verification Code",
-                recipients=[email],
-                body=f"Your verification code is: {code}\n\nThis code will expire in 10 minutes."
-            )
-            
-            mail.send(msg)
-            print(f"✅ Email sent via SMTP to {email}")
-            return True
+        if not sendgrid_api_key:
+            raise ValueError("SENDGRID_API_KEY environment variable is not set")
+        
+        # âœ… Use SendGrid API for all environments
+        print(f"ðŸ“§ Using SendGrid API to send email to {email}")
+        
+        from sendgrid import SendGridAPIClient
+        from sendgrid.helpers.mail import Mail
+        
+        # ✅ Get verified sender email from environment
+        # Must be verified in SendGrid account
+        sender_email = os.environ.get('SENDGRID_SENDER_EMAIL', 'princemaya26@gmail.com')
+        
+        message = Mail(
+            from_email=(sender_email, "Kitchen Guardian"),
+            to_emails=email,
+            subject='Your Kitchen Guardian Verification Code',
+            html_content=f"""
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif; background-color: #f5f5f5;">
+    <table role="presentation" style="width: 100%; border-collapse: collapse;">
+        <tr>
+            <td style="padding: 40px 20px;">
+                <table role="presentation" style="max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                    <!-- Header -->
+                    <tr>
+                        <td style="padding: 40px 40px 20px 40px; text-align: center; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 8px 8px 0 0;">
+                            <h1 style="margin: 0; color: #ffffff; font-size: 28px; font-weight: 600;">Kitchen Guardian</h1>
+                        </td>
+                    </tr>
+                    
+                    <!-- Body -->
+                    <tr>
+                        <td style="padding: 40px;">
+                            <h2 style="margin: 0 0 20px 0; color: #333333; font-size: 22px; font-weight: 600;">Verify Your Email</h2>
+                            <p style="margin: 0 0 30px 0; color: #666666; font-size: 16px; line-height: 1.5;">
+                                Thank you for signing up! Please use the verification code below to complete your registration:
+                            </p>
+                            
+                            <!-- Verification Code Box -->
+                            <table role="presentation" style="width: 100%; margin: 0 0 30px 0;">
+                                <tr>
+                                    <td style="background-color: #f8f9fa; border: 2px dashed #667eea; border-radius: 8px; padding: 25px; text-align: center;">
+                                        <div style="font-size: 36px; font-weight: 700; color: #667eea; letter-spacing: 8px; font-family: 'Courier New', monospace;">
+                                            {code}
+                                        </div>
+                                    </td>
+                                </tr>
+                            </table>
+                            
+                            <p style="margin: 0 0 10px 0; color: #999999; font-size: 14px; line-height: 1.5;">
+                                This code will expire in 10 minutes.
+                            </p>
+                            <p style="margin: 0; color: #999999; font-size: 14px; line-height: 1.5;">
+                                If you didn't request this code, please ignore this email.
+                            </p>
+                        </td>
+                    </tr>
+                    
+                    <!-- Footer -->
+                    <tr>
+                        <td style="padding: 30px 40px; background-color: #f8f9fa; border-radius: 0 0 8px 8px; border-top: 1px solid #e9ecef;">
+                            <p style="margin: 0 0 10px 0; color: #666666; font-size: 14px; text-align: center;">
+                                Kitchen Guardian - Smart Kitchen Management
+                            </p>
+                            <p style="margin: 0; color: #999999; font-size: 12px; text-align: center;">
+                                This is an automated message, please do not reply.
+                            </p>
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>
+            """
+        )
+        
+        # ✅ CRITICAL: Add plain text version for spam prevention
+        # Emails without plain text are more likely to be marked as spam
+        message.plain_text_content = f"""
+Kitchen Guardian - Email Verification
+
+Your verification code is: {code}
+
+This code will expire in 10 minutes.
+
+If you didn't request this code, please ignore this email.
+
+---
+Kitchen Guardian - Smart Kitchen Management
+This is an automated message, please do not reply.
+        """
+        
+        sg = SendGridAPIClient(sendgrid_api_key)
+        response = sg.send(message)
+        print(f"âœ… Email sent via SendGrid. Status: {response.status_code}")
+        return True
             
     except Exception as e:
-        print(f"❌ Error sending email: {str(e)}")
+        print(f"âŒ Error sending email: {str(e)}")
         traceback.print_exc()
         return False
 

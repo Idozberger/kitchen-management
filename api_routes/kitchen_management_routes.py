@@ -721,7 +721,58 @@ def make_cohost():
     finally:
         session.close()
 
-
+@kitchen_management_blueprint.route('/api/kitchen/demote_cohost', methods=['POST'])
+@jwt_required()
+def demote_cohost():
+    """Demote co-host to regular member (host only)"""
+    session = get_session()
+    try:
+        user_identity = get_jwt()
+        user_id = int(user_identity['user_id'])
+        data = request.get_json()
+        kitchen_id = data.get('kitchen_id')
+        member_id = data.get('member_id')
+        
+        # Validate input
+        try:
+            kitchen_id = int(kitchen_id)
+            member_id = int(member_id)
+        except (ValueError, TypeError):
+            return jsonify({'error': 'Invalid kitchen ID or member ID'}), 400
+        
+        # Fetch kitchen
+        kitchen = session.query(Kitchen).filter(Kitchen.id == kitchen_id).first()
+        if not kitchen:
+            return jsonify({'error': 'Kitchen not found'}), 404
+        
+        # Check if requester is the host
+        if kitchen.host_id != user_id:
+            return jsonify({'error': 'Only the host can demote a co-host'}), 403
+        
+        # Find the member to demote
+        member = session.query(KitchenMember).filter(
+            KitchenMember.kitchen_id == kitchen_id,
+            KitchenMember.user_id == member_id
+        ).first()
+        
+        if not member:
+            return jsonify({'error': 'Member not found in the kitchen'}), 404
+        
+        # Check if member is actually a co-host
+        if member.member_type != 'co-host':
+            return jsonify({'error': 'This member is not a co-host'}), 409
+        
+        # Demote to regular member
+        member.member_type = 'member'
+        session.commit()
+        
+        return jsonify({'message': 'Co-host has been demoted to member successfully'}), 200
+        
+    except Exception as e:
+        session.rollback()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        session.close()
 # ============================================================
 # INVENTORY MANAGEMENT ENDPOINTS (14-19)
 # ============================================================
