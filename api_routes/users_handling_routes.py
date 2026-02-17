@@ -157,7 +157,7 @@ def send_email_verification(email, code):
         
         # ✅ Get verified sender email from environment
         # Must be verified in SendGrid account
-        sender_email = os.environ.get('SENDGRID_SENDER_EMAIL', 'princemaya26@gmail.com')
+        sender_email = os.environ.get('SENDGRID_SENDER_EMAIL', 'no-reply@kitchensguardian.com')
         
         message = Mail(
             from_email=(sender_email, "Kitchen Guardian"),
