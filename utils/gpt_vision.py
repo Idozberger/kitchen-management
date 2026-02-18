@@ -54,7 +54,59 @@ def generate_food_thumbnail(item_name):
     except Exception as e:
         print(f"Error generating thumbnail for {item_name}: {str(e)}")
         return None
+    
+def generate_thumbnails_background(item_ids: list):
+    """
+    Generate DALL-E thumbnails for a list of KitchenItem item_ids in a background thread.
 
+    Designed to be called after DB commit so items already exist.
+    Each item is fetched, thumbnail generated, and saved independently —
+    a failure on one item never affects the others.
+
+    Usage (from any route after committing new items):
+        import threading
+        from utils.gpt_vision import generate_thumbnails_background
+
+        t = threading.Thread(
+            target=generate_thumbnails_background,
+            args=(new_item_ids,),
+            daemon=True
+        )
+        t.start()
+    """
+    if not item_ids:
+        return
+
+    # Import here to avoid circular imports at module load time
+    from db_connection import get_session
+    from models import KitchenItem
+
+    print(f"🖼 [thumbnail_bg] Starting background generation for {len(item_ids)} items")
+    db = get_session()
+    try:
+        for item_id in item_ids:
+            try:
+                item = db.query(KitchenItem).filter(KitchenItem.item_id == item_id).first()
+                if not item:
+                    print(f"🖼 [thumbnail_bg] item_id '{item_id}' not found, skipping")
+                    continue
+                if item.thumbnail:
+                    print(f"🖼 [thumbnail_bg] '{item.name}' already has thumbnail, skipping")
+                    continue
+
+                thumb_b64 = generate_food_thumbnail(item.name)
+                if thumb_b64:
+                    item.thumbnail = f"data:image/png;base64,{thumb_b64}"
+                    db.commit()
+                    print(f"🖼 [thumbnail_bg] ✅ Saved thumbnail for '{item.name}'")
+                else:
+                    print(f"🖼 [thumbnail_bg] ⚠️ No thumbnail returned for '{item.name}'")
+            except Exception as e:
+                db.rollback()
+                print(f"🖼 [thumbnail_bg] ❌ Failed for item_id '{item_id}': {e}")
+    finally:
+        db.close()
+    print(f"🖼 [thumbnail_bg] Done")
 
 def encode_image(image_path):
     with open(image_path, "rb") as image_file:
@@ -177,10 +229,3 @@ IMPORTANT:
         items = list(executor.map(add_thumbnail, items))
     
     return json.dumps({"items": items})
-
-
-
-
-# Example usage
-
-# Try syncing the item spelling if exactly same item already exist in inventory list. If they're different ingredients then make sure to consider them different use the original identified spelling of item from recipt

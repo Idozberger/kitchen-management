@@ -73,6 +73,7 @@ from models import ConsumptionBaseline
 from utils.scheduler import ConsumptionScheduler
 from utils.consumption_baselines import populate_baselines_to_db
 from api_routes.consumption_prediction_routes import consumption_prediction_blueprint
+from api_routes.smart_kitchen_setup_routes import smart_kitchen_setup_blueprint
 import atexit
 
 app = Flask(__name__)
@@ -109,6 +110,7 @@ app.register_blueprint(kitchen_management_blueprint)
 app.register_blueprint(meal_planner_blueprint)
 app.register_blueprint(expiring_items_recipe_blueprint)
 app.register_blueprint(consumption_prediction_blueprint) 
+app.register_blueprint(smart_kitchen_setup_blueprint)
 
 # ADD THESE LINES FOR AUTO SWAGGER UI
 SWAGGER_URL = '/docs'
@@ -1766,7 +1768,162 @@ def swagger_json():
                 }
             }
         },
-
+        # ─── Smart Kitchen Setup ──────────────────────────────────────────────────
+        '/api/kitchen/setup/scan': {
+            'POST': {
+                'summary': 'Smart Kitchen Setup - Scan Images',
+                'description': (
+                    'Scan 1-5 kitchen area photos with AI (GPT-4o Vision) to detect food items. '
+                    'Returns auto_confirmed (confidence >= 70%) and needs_review lists. '
+                    'Expiry dates are resolved from the existing baseline database, not from AI.\n\n'
+                    'Image field naming options:\n'
+                    '  Option A (named areas): image_fridge, image_freezer, image_pantry, image_spices, image_miscellaneous\n'
+                    '  Option B (indexed):     image_0 .. image_4  (+ optional area_0 .. area_4)\n'
+                    '  Option C (single):      image               (+ optional area field)\n\n'
+                    'Also requires kitchen_id as a form field.'
+                ),
+                'consumes': ['multipart/form-data'],
+                'parameters': [
+                    {'name': 'kitchen_id',         'in': 'formData', 'required': True,  'type': 'integer', 'description': 'Kitchen ID'},
+                    {'name': 'image_fridge',        'in': 'formData', 'required': False, 'type': 'file',    'description': 'Photo of fridge interior'},
+                    {'name': 'image_freezer',       'in': 'formData', 'required': False, 'type': 'file',    'description': 'Photo of freezer interior'},
+                    {'name': 'image_pantry',        'in': 'formData', 'required': False, 'type': 'file',    'description': 'Photo of pantry / dry storage'},
+                    {'name': 'image_spices',        'in': 'formData', 'required': False, 'type': 'file',    'description': 'Photo of spices / seasonings shelf'},
+                    {'name': 'image_miscellaneous', 'in': 'formData', 'required': False, 'type': 'file',    'description': 'Photo of countertop or miscellaneous area'},
+                ],
+                'tags': ['Smart Kitchen Setup'],
+                'security': [{'Bearer': []}],
+                'responses': {
+                    '200': {'description': 'Returns session_id, auto_confirmed[], needs_review[]'},
+                    '400': {'description': 'Missing kitchen_id or no images provided'},
+                    '403': {'description': 'Only host or co-host can scan'},
+                    '401': {'description': 'Unauthorized'},
+                }
+            }
+        },
+        '/api/kitchen/setup/edit': {
+            'PUT': {
+                'summary': 'Smart Kitchen Setup - Edit Detected Items',
+                'description': (
+                    'After scanning, the user reviews the AI-detected list and edits it. '
+                    'Call this endpoint with the updated list to save changes back to the session.\n\n'
+                    'The user can:\n'
+                    '  - Edit name, quantity, unit, recommended_storage, expiry_date\n'
+                    '  - Remove items (simply omit them from the list)\n'
+                    '  - Add new items manually\n\n'
+                    'Expiry is auto-resolved from baselines for any item missing expiry_date.'
+                ),
+                'parameters': [{
+                    'name': 'body',
+                    'in': 'body',
+                    'required': True,
+                    'schema': {
+                        'type': 'object',
+                        'required': ['session_id', 'items'],
+                        'properties': {
+                            'session_id': {'type': 'string', 'example': 'a1b2c3d4e5f6...'},
+                            'items': {
+                                'type': 'array',
+                                'items': {
+                                    'type': 'object',
+                                    'required': ['name'],
+                                    'properties': {
+                                        'name':                 {'type': 'string',  'example': 'whole milk'},
+                                        'quantity':             {'type': 'number',  'example': 2},
+                                        'unit':                 {'type': 'string',  'example': 'litre', 'description': 'kg | grams | litre | mL | pounds | ounces | count'},
+                                        'recommended_storage':  {'type': 'string',  'example': 'fridge', 'description': 'fridge | freezer | pantry | cabinet | counter'},
+                                        'expiry_date':          {'type': 'string',  'example': '7 days', 'description': 'Optional - auto-calculated from baselines if omitted'},
+                                        'brand':                {'type': 'string',  'example': 'Heinz',  'description': 'Optional brand name'},
+                                        'area':                 {'type': 'string',  'example': 'fridge', 'description': 'Kitchen area this item came from'},
+                                        'temp_id':              {'type': 'string',  'example': 'abc123', 'description': 'Keep the original temp_id to maintain item identity'},
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }],
+                'tags': ['Smart Kitchen Setup'],
+                'security': [{'Bearer': []}],
+                'responses': {
+                    '200': {'description': 'Updated items saved to session'},
+                    '400': {'description': 'Missing session_id or invalid body'},
+                    '403': {'description': 'Only host or co-host can edit'},
+                    '404': {'description': 'Session not found'},
+                    '409': {'description': 'Session already confirmed'},
+                }
+            }
+        },
+        '/api/kitchen/setup/confirm': {
+            'POST': {
+                'summary': 'Smart Kitchen Setup - Confirm and Populate Inventory',
+                'description': (
+                    'Finalises the setup by adding all confirmed items to the kitchen inventory.\n\n'
+                    'Uses the session\'s current item list (as saved by /edit).\n'
+                    'Optionally accepts an inline "items" list to override the session list.\n\n'
+                    'Items are merged with existing inventory (quantities summed for duplicates).\n'
+                    'Thumbnails generated via DALL-E. Expiry always resolved from baselines.\n'
+                    'Only host or co-host can call this.'
+                ),
+                'parameters': [{
+                    'name': 'body',
+                    'in': 'body',
+                    'required': True,
+                    'schema': {
+                        'type': 'object',
+                        'required': ['session_id'],
+                        'properties': {
+                            'session_id': {'type': 'string', 'example': 'a1b2c3d4e5f6...'},
+                            'items': {
+                                'type': 'array',
+                                'description': 'Optional override list. If omitted, uses the session\'s saved item list.',
+                                'items': {
+                                    'type': 'object',
+                                    'required': ['name'],
+                                    'properties': {
+                                        'name':                {'type': 'string', 'example': 'whole milk'},
+                                        'quantity':            {'type': 'number', 'example': 2},
+                                        'unit':                {'type': 'string', 'example': 'litre'},
+                                        'recommended_storage': {'type': 'string', 'example': 'fridge'},
+                                        'expiry_date':         {'type': 'string', 'example': '7 days'},
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }],
+                'tags': ['Smart Kitchen Setup'],
+                'security': [{'Bearer': []}],
+                'responses': {
+                    '200': {'description': 'Kitchen inventory populated successfully'},
+                    '400': {'description': 'Missing session_id or no items to confirm'},
+                    '403': {'description': 'Only host or co-host can confirm'},
+                    '404': {'description': 'Session not found'},
+                    '409': {'description': 'Session already confirmed'},
+                }
+            }
+        },
+        '/api/kitchen/setup/history': {
+            'GET': {
+                'summary': 'Smart Kitchen Setup - Scan Session History',
+                'description': (
+                    'Returns paginated list of all setup scan sessions for a kitchen.\n'
+                    'Used for the "Re-scan My Kitchen" feature in Profile Settings.\n'
+                    'Any kitchen member can view the history.'
+                ),
+                'parameters': [
+                    {'name': 'kitchen_id', 'in': 'query', 'required': True,  'type': 'integer', 'description': 'Kitchen ID'},
+                    {'name': 'page',       'in': 'query', 'required': False, 'type': 'integer', 'description': 'Page number (default 0, page size = 10)'},
+                ],
+                'tags': ['Smart Kitchen Setup'],
+                'security': [{'Bearer': []}],
+                'responses': {
+                    '200': {'description': 'Returns paginated list of scan sessions'},
+                    '400': {'description': 'Missing kitchen_id'},
+                    '403': {'description': 'Not a kitchen member'},
+                    '404': {'description': 'Kitchen not found'},
+                }
+            }
+        },
     }
 
     # Auto-discover all routes

@@ -72,6 +72,7 @@ class Kitchen(Base):
     usage_events = relationship('ConsumptionUsageEvent', back_populates='kitchen', cascade='all, delete-orphan')
     pending_confirmations = relationship('PendingConfirmation', back_populates='kitchen', cascade='all, delete-orphan')
     items_history = relationship('KitchenItemsHistory', back_populates='kitchen', uselist=False, cascade='all, delete-orphan')
+    setup_sessions = relationship('KitchenSetupSession', back_populates='kitchen', cascade='all, delete-orphan')
     
     def __repr__(self):
         return f"<Kitchen(id={self.id}, name='{self.kitchen_name}')>"
@@ -502,3 +503,29 @@ class ConsumptionBaseline(Base):
     
     def __repr__(self):
         return f"<ConsumptionBaseline(item='{self.item_name}', days={self.avg_consumption_days})>"
+
+
+# ============================================
+# KITCHEN SETUP SESSION MODEL
+# ============================================
+class KitchenSetupSession(Base):
+    __tablename__ = 'kitchen_setup_sessions'
+
+    id              = Column(Integer, primary_key=True, autoincrement=True)
+    session_id      = Column(String(32), unique=True, nullable=False, index=True)   # UUID hex
+    kitchen_id      = Column(Integer, ForeignKey('kitchens.id', ondelete='CASCADE'), nullable=False, index=True)
+    scanned_by      = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+    areas_scanned   = Column(JSON, nullable=False, default=list)    # ['fridge', 'pantry', ...]
+    raw_detected    = Column(JSON, nullable=False, default=list)    # Working item list (updated by /edit)
+    confirmed_items = Column(JSON, nullable=True,  default=list)    # Final confirmed list
+    status          = Column(String(20), nullable=False, default='pending', index=True)  # 'pending' | 'confirmed'
+    total_detected  = Column(Integer, default=0)
+    total_confirmed = Column(Integer, nullable=True)
+    scanned_at      = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
+    confirmed_at    = Column(DateTime(timezone=True), nullable=True)
+
+    # Relationships
+    kitchen = relationship('Kitchen', back_populates='setup_sessions')
+
+    def __repr__(self):
+        return f"<KitchenSetupSession(id={self.id}, kitchen_id={self.kitchen_id}, status='{self.status}')>"
