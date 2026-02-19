@@ -18,7 +18,6 @@ import json
 import re
 import uuid
 import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from openai import OpenAI
 
 from db_connection import get_session
@@ -26,7 +25,7 @@ from models import Kitchen, KitchenMember, KitchenItem, KitchenItemsHistory, Kit
 from sqlalchemy import func
 from utils.gpt_vision import generate_thumbnails_background
 from utils.expiry_baselines import get_expiry_baseline
-from utils.expiry_calculator import calculate_item_expiry
+from utils.expiry_calculator import calculate_item_expiry, calculate_items_expiry_batch
 
 smart_kitchen_setup_blueprint = Blueprint('smart_kitchen_setup_blueprint', __name__)
 
@@ -71,10 +70,8 @@ def _is_host_or_cohost(session, user_id: int, kitchen_id: int) -> bool:
 
 def _get_expiry_for_item(item_name: str, storage: str) -> str:
     """
-    Resolve expiry using the same strategy as receipt scanning:
-    1. Try EXPIRY_BASELINES (exact + partial match)
-    2. Fallback to calculate_item_expiry (OpenAI mini -> storage defaults)
-    Returns a human-readable string like "7 days", "2 weeks", "6 months".
+    Single-item expiry lookup — used by /edit and /confirm where items
+    arrive one at a time (user corrections). Uses baseline then calculator fallback.
     """
     baseline = get_expiry_baseline(item_name)
     if baseline:
@@ -91,9 +88,26 @@ def _get_expiry_for_item(item_name: str, storage: str) -> str:
             years = round(days / 365)
             return f"{years} year{'s' if years > 1 else ''}"
 
-    # Fallback: baseline not found → expiry_calculator (OpenAI mini → storage default)
     result = calculate_item_expiry(item_name, storage)
     return result if result else "30 days"
+
+
+def _resolve_expiry_for_all(raw_items: list) -> dict:
+    """
+    Resolve expiry for all detected items in one shot using the batch function.
+    Baseline hits are free; all OpenAI fallbacks are combined into ONE API call.
+
+    Returns dict: {item_name_lowercase -> expiry_string}
+    """
+    batch_input = [
+        {
+            'name': item.get('name', '').strip().lower(),
+            'storage': item.get('recommended_storage', 'pantry')
+        }
+        for item in raw_items
+        if item.get('name', '').strip()
+    ]
+    return calculate_items_expiry_batch(batch_input)
 
 
 # ─────────────────────────────────────────────
@@ -253,43 +267,31 @@ def _deduplicate_items(all_items: list) -> list:
     return list(merged.values())
 
 
-def _build_item_entry(raw: dict) -> dict:
+def _build_entries(raw_items: list, expiry_map: dict) -> list:
     """
-    Build a standardised item dict and attach baseline-resolved expiry.
-    Expiry NEVER comes from the AI.
+    Build standardised item entry dicts using a pre-resolved expiry map.
+    expiry_map comes from _resolve_expiry_for_all() — already computed in one batch call.
     """
-    name = raw.get('name', '').strip().lower()
-    storage = raw.get('recommended_storage', 'pantry').strip().lower()
-    if storage not in ['fridge', 'freezer', 'pantry', 'cabinet', 'counter']:
-        storage = 'pantry'
-
-    return {
-        'temp_id':              uuid.uuid4().hex,
-        'name':                 name,
-        'quantity':             raw.get('quantity', 1),
-        'unit':                 raw.get('unit', 'count'),
-        'confidence':           raw.get('confidence', 0),
-        'recommended_storage':  storage,
-        'expiry_date':          _get_expiry_for_item(name, storage),
-        'brand':                raw.get('brand', None),
-        'area':                 raw.get('area', 'miscellaneous'),
-    }
-
-
-def _build_entries_parallel(raw_items: list) -> list:
-    """
-    Build all item entries in parallel so that expiry lookups that fall through
-    to OpenAI (items not in EXPIRY_BASELINES) run concurrently instead of
-    one-by-one, keeping the /scan response fast even with many unknown items.
-    """
-    if not raw_items:
-        return []
-
-    # Use a thread per item; baseline lookups are instant (dict),
-    # OpenAI fallbacks are the ones that benefit from parallelism.
-    with ThreadPoolExecutor(max_workers=min(len(raw_items), 10)) as executor:
-        results = list(executor.map(_build_item_entry, raw_items))
-    return results
+    entries = []
+    for raw in raw_items:
+        name = raw.get('name', '').strip().lower()
+        if not name:
+            continue
+        storage = raw.get('recommended_storage', 'pantry').strip().lower()
+        if storage not in ['fridge', 'freezer', 'pantry', 'cabinet', 'counter']:
+            storage = 'pantry'
+        entries.append({
+            'temp_id':             uuid.uuid4().hex,
+            'name':                name,
+            'quantity':            raw.get('quantity', 1),
+            'unit':                raw.get('unit', 'count'),
+            'confidence':          raw.get('confidence', 0),
+            'recommended_storage': storage,
+            'expiry_date':         expiry_map.get(name, '30 days'),
+            'brand':               raw.get('brand', None),
+            'area':                raw.get('area', 'miscellaneous'),
+        })
+    return entries
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -385,12 +387,15 @@ def scan_kitchen_setup():
             print(f"[smart_kitchen_setup] Error scanning {area_label}: {e}")
             # Continue with remaining images
 
-    # ── Deduplicate + resolve expiry from baselines (parallel) ─
+    # ── Deduplicate across areas ──────────────────────────
     all_raw = _deduplicate_items(all_raw)
 
-    # Expiry resolution runs in parallel — items in EXPIRY_BASELINES resolve
-    # instantly; those that fall back to OpenAI run concurrently, not sequentially.
-    all_entries = _build_entries_parallel(all_raw)
+    # ── Resolve ALL expiry dates in ONE batch call ─────────
+    # Baseline hits are free; all OpenAI fallbacks combined into a single API call
+    expiry_map = _resolve_expiry_for_all(all_raw)
+
+    # ── Build entries and split by confidence ──────────────
+    all_entries = _build_entries(all_raw, expiry_map)
 
     auto_confirmed = []
     needs_review   = []
@@ -551,14 +556,6 @@ def edit_kitchen_setup():
         return jsonify({'error': str(e)}), 500
     finally:
         db.close()
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Background thumbnail worker lives in utils/gpt_vision.py
-# → generate_thumbnails_background(item_ids)
-# Imported above and used after DB commit in /confirm
-# ─────────────────────────────────────────────────────────────────────────────
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # ENDPOINT 3 — Confirm & Populate Inventory
