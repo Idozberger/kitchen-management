@@ -67,7 +67,7 @@ class ReceiptEnhancer:
                     }
                 ],
                 temperature=0.1,  # Very low for consistency
-                max_tokens=4000
+                max_tokens=6000
             )
             
             # Extract JSON response
@@ -104,10 +104,11 @@ class ReceiptEnhancer:
                 
                 # Additional filtering based on keywords (backup)
                 item_name = item.get('full_name', '').lower()
-                non_food_keywords = ['diaper', 'wipe', 'cleaning', 'detergent', 'soap', 
+                non_food_keywords = ['cleaning', 'detergent', 'soap', 
                                     'shampoo', 'deodorant', 'toothpaste', 'toilet paper',
-                                    'paper towel', 'garbage bag', 'pet food', 'dog food',
-                                    'cat food', 'cigarette', 'tobacco', 'lighter', 'tissue']
+                                    'paper towel', 'garbage bag',
+                                    'cigarette', 'tobacco', 'lighter', 'tissue',
+                                    'dog food', 'cat food', 'pet food', 'diaper', 'baby wipe']
                 
                 has_non_food_keyword = any(keyword in item_name for keyword in non_food_keywords)
                 
@@ -186,8 +187,8 @@ RAW RECEIPT LINES:
 TASK: Extract ONLY FOOD items with accurate quantities based on {currency} pricing.
 
 STEP 1: IDENTIFY FOOD ITEMS
-✅ Include: dairy, meat, produce, pantry, bakery, snacks, beverages, frozen food
-❌ Skip: diapers, cleaning supplies, personal care, household, tobacco, pet food
+✅ Include: dairy, meat, produce, pantry, bakery, snacks, beverages, frozen food, baby food (Gerber, formula, baby cereal, baby snacks)
+❌ Skip: cleaning supplies, personal care (shampoo, deodorant, soap, toothpaste), household items, tobacco, pet food (dog/cat food), diapers/wipes
 
 STEP 2: EXPAND ABBREVIATIONS (use COMPLETE context!)
 Examples:
@@ -199,9 +200,18 @@ Brand codes: PC=President's Choice, KFT=Kraft, DO=Dole
 
 STEP 3: ESTIMATE QUANTITIES FROM {currency} PRICES
 
+⚠️  QUANTITY PREFIX RULE — CRITICAL:
+- "2@", "2 @", "2x" at the start of a line means the item was purchased TWICE
+  → Set quantity = 2 × (single unit size)
+  → Example: "2@ BIBIGO POTSTICKERS 9.58" → 2 packs of potstickers
+  → Example: "4@ FF CKN BRST STRIPS 39.96" → 4 packs of chicken breast strips
+  → Example: "3@ CHUCK POT ROAST 13.67" → 3 pot roasts
+- "2 @ $8.49" in the item line means 2 units at $8.49 each → quantity = 2
+- If the quantity is explicit like this, USE IT. Do not estimate from price.
+
 ⚠️  USE THESE {currency} RANGES (NOT USD!):
 
-If explicit quantity shown (e.g., "2@", "3x") → USE IT EXACTLY
+If explicit quantity shown (e.g., "2@", "3x", "2 @") → USE IT EXACTLY, multiply accordingly
 
 Otherwise estimate from price:
 

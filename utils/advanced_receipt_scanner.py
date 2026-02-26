@@ -101,6 +101,8 @@ class AdvancedReceiptScanner:
             print("👁️  Step 1: Extracting items with GPT-4o Vision...")
             raw_items = self._extract_items_with_vision(image_bytes, currency, country)
             print(f"   ✅ Vision extracted {len(raw_items)} item lines")
+            for i, item in enumerate(raw_items, 1):
+                print(f"      {i}. {item}")
 
             if not raw_items:
                 return {
@@ -234,25 +236,51 @@ class AdvancedReceiptScanner:
 
     def _extract_items_with_vision(self, image_bytes: bytes, currency: str, country: str) -> List[str]:
         """
-        Extract food item lines from the receipt image using GPT-4o Vision.
+        Extract ALL item lines from the receipt image using GPT-4o Vision.
+
+        Key rules:
+        - Extract EVERY product line - do NOT filter food vs non-food here (filtering happens in Step 2)
+        - Merge multi-line entries: if a quantity/price line follows an item (e.g. "2 @ $8.49"), 
+          combine it with the item line above so quantity context is never lost
+        - Preserve quantity prefixes like "2@", "3@", "4@" exactly as written
+        - max_tokens raised to 4000 to handle long receipts without truncation
         """
         import base64
         import re
 
         image_base64 = base64.b64encode(image_bytes).decode('utf-8')
 
-        vision_prompt = f"""Extract ALL food item lines from this receipt.
+        vision_prompt = f"""You are reading a grocery receipt from {country} (prices in {currency}).
 
-For each item line, provide:
-- The exact text as it appears
-- Include product code if visible
-- Include price if visible
+YOUR TASK: Extract EVERY purchased item line from this receipt — ALL of them, from top to bottom.
 
-Return as simple list, one item per line.
+CRITICAL RULES:
 
-Receipt is from {country} with prices in {currency}.
+1. EXTRACT ALL ITEMS — do NOT skip anything yet. Include groceries, dairy, meat, bakery, seafood, baby food, beverages, produce, and also non-food items like personal care, household. We will filter later. Do NOT miss any item.
 
-ONLY extract FOOD items (skip diapers, cleaning, household items)."""
+2. MERGE MULTI-LINE ENTRIES — receipts often split one item across two lines:
+   Example on receipt:
+       NN EGGS WH LRG  MRJ
+       2 @ $8.49                16.98
+   → Merge into ONE line: "NN EGGS WH LRG MRJ  2 @ $8.49  16.98"
+   
+   Another example:
+       ALMOND ORIGINAL  MRJ
+       $3.49 lmt 4, $4.19 ea
+       2 @ $3.49 ea             6.98
+   → Merge into ONE line: "ALMOND ORIGINAL MRJ  2 @ $3.49 ea  6.98"
+
+3. PRESERVE QUANTITY PREFIXES — keep "2@", "3@", "4@", "2 @" exactly as written. Never remove them.
+
+4. INCLUDE PRODUCT CODES — if a barcode/SKU appears before the item name, include it.
+
+5. ONE MERGED LINE PER ITEM — output exactly one line per purchased product.
+
+6. SKIP non-item lines — skip: store name, address, phone, subtotal, tax, total, change, cashier name, section headers (like "22-DAIRY"), deposit/recycling fee lines, coupon/savings lines, membership lines.
+
+Receipt is from {country}, prices in {currency}.
+
+Return ONLY the item lines, one per line, no numbering, no bullets, no extra commentary."""
 
         response = self.openai_client.chat.completions.create(
             model="gpt-4o",
@@ -270,13 +298,17 @@ ONLY extract FOOD items (skip diapers, cleaning, household items)."""
                     ]
                 }
             ],
-            max_tokens=2000
+            max_tokens=4000  # Raised from 2000 — long receipts were getting truncated
         )
 
         vision_text = response.choices[0].message.content
 
+        # Split into lines, strip whitespace, remove empty lines
         raw_items = [line.strip() for line in vision_text.split('\n') if line.strip()]
-        raw_items = [re.sub(r'^\d+\.\s*', '', item) for item in raw_items]
+
+        # Only strip leading list numbering like "1. " or "1) " but NOT "2@" quantity prefixes.
+        # Old regex ^\d+\.\s* was incorrectly matching "2." in "2@ BIBIGO" — fixed below.
+        raw_items = [re.sub(r'^\d+[.)]\s+', '', item) for item in raw_items]
 
         return raw_items
 
