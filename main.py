@@ -1211,18 +1211,6 @@ def swagger_json():
                         'required': False,
                         'default': 'USA',
                         'description': 'Country code (e.g., USA, GBR). Default: USA'
-                    },
-                    {
-                        'name': 'use_google_document',
-                        'in': 'formData',
-                        'type': 'boolean',
-                        'required': False,
-                        'default': True,
-                        'description': (
-                            'Select scanning mode. '
-                            'true = Google Document AI + OpenAI enhancement, '
-                            'false = OpenAI Vision direct.'
-                        )
                     }
                 ],
                 'tags': ['Receipt Scanning'],
@@ -1246,7 +1234,6 @@ def swagger_json():
                 }
             }
         },
-
 
         '/api/get_scan_history': {
             'GET': {
