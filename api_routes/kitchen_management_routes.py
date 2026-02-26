@@ -11,7 +11,7 @@ import uuid
 import threading
 from random import randint
 from utils.gpt_vision import generate_food_thumbnail, generate_thumbnails_background
-from utils.expiry_calculator import calculate_item_expiry
+from utils.kitchen_item_helpers import _insert_item_into_kitchen
 
 # PostgreSQL imports
 from db_connection import get_session
@@ -781,7 +781,8 @@ def demote_cohost():
 @kitchen_management_blueprint.route('/api/kitchen/add_items', methods=['POST'])
 @jwt_required()
 def add_items_to_kitchen():
-    """Add items to kitchen inventory"""
+    """Add items to kitchen inventory (host and co-host only).
+    Members should use /api/kitchen/request_add_items instead."""
     session = get_session()
     try:
         user_identity = get_jwt()
@@ -807,108 +808,26 @@ def add_items_to_kitchen():
         ).first() is not None
         
         if not (is_host or is_co_host):
-            return jsonify({'error': 'Only the host or co-hosts can add items to this kitchen'}), 403
+            return jsonify({
+                'error': 'Only the host or co-hosts can add items directly. '
+                         'Members can request items via /api/kitchen/request_add_items'
+            }), 403
         
         for item in items:
             if 'name' not in item or not item['name']:
                 return jsonify({'error': 'Each item must have a name'}), 400
 
-        new_item_ids = []   # item_ids of newly inserted items needing background thumbnails
+        new_item_ids = []
 
         for new_item in items:
-            new_item_name = new_item['name'].strip().lower()
-            
-            # Handle optional unit - default to 'count' if not provided
-            unit_value = new_item.get('unit')
-            if unit_value and isinstance(unit_value, str) and unit_value.strip():
-                new_item_unit = unit_value.strip().lower()
-            else:
-                new_item_unit = 'count'
-            
-            new_item_group = new_item.get('group', '').strip().lower() or "pantry"
-            
-            # Handle optional quantity - default to 1 if not provided
-            quantity_value = new_item.get('quantity')
-            if quantity_value is not None:
-                try:
-                    new_item_quantity = float(quantity_value)
-                except (ValueError, TypeError):
-                    return jsonify({'error': f"Invalid quantity for '{new_item['name']}'"}), 400
-            else:
-                new_item_quantity = 1.0
-            
-            existing_item = session.query(KitchenItem).filter(
-                KitchenItem.kitchen_id == kitchen_id,
-                func.lower(KitchenItem.name) == new_item_name,
-                func.lower(KitchenItem.unit) == new_item_unit,
-                func.lower(KitchenItem.group) == new_item_group
-            ).first()
-            
-            if existing_item:
-                existing_item.quantity += new_item_quantity
-                
-                # Use caller-provided thumbnail if given; otherwise keep existing
-                if new_item.get('thumbnail'):
-                    existing_item.thumbnail = new_item['thumbnail']
-                # (no background thumbnail generation for updates - item already has one)
-
-                # Expiry: use provided value, or auto-calculate
-                if new_item.get('expiry_date'):
-                    existing_item.expiry_date = new_item['expiry_date']
-                    existing_item.added_at = datetime.now(timezone.utc)
-                    print(f"   Using provided expiry: {new_item['expiry_date']}")
-                else:
-                    print(f"   No expiry provided for '{new_item['name']}', calculating...")
-                    try:
-                        auto_expiry = calculate_item_expiry(new_item['name'], new_item_group)
-                        if auto_expiry:
-                            existing_item.expiry_date = auto_expiry
-                            existing_item.added_at = datetime.now(timezone.utc)
-                            print(f"   Auto-calculated expiry: {auto_expiry}")
-                        else:
-                            print(f"   Could not calculate expiry, keeping existing")
-                    except Exception as e:
-                        print(f"   Error calculating expiry: {str(e)}")
-            else:
-                # Expiry: use provided value, or auto-calculate
-                expiry_date_value = new_item.get('expiry_date')
-                if not expiry_date_value:
-                    print(f"   No expiry for new item '{new_item['name']}', calculating...")
-                    try:
-                        auto_expiry = calculate_item_expiry(new_item['name'], new_item_group)
-                        if auto_expiry:
-                            expiry_date_value = auto_expiry
-                            print(f"   Auto-calculated expiry: {auto_expiry}")
-                    except Exception as e:
-                        print(f"   Error calculating expiry: {str(e)}")
-                else:
-                    print(f"   Using provided expiry: {expiry_date_value}")
-
-                # Use caller-provided thumbnail if given; otherwise save None and generate in background
-                thumbnail = new_item.get('thumbnail') or None
-                new_item_id = uuid.uuid4().hex
-
-                kitchen_item = KitchenItem(
-                    item_id=new_item_id,
-                    kitchen_id=kitchen_id,
-                    name=new_item['name'],
-                    quantity=new_item_quantity,
-                    unit=new_item_unit,
-                    group=new_item_group,
-                    thumbnail=thumbnail,
-                    expiry_date=expiry_date_value,
-                    added_at=datetime.now(timezone.utc)
-                )
-                session.add(kitchen_item)
-
-                # Queue for background thumbnail generation only if no thumbnail was provided
-                if not thumbnail:
-                    new_item_ids.append(new_item_id)
+            item_id, needs_thumbnail = _insert_item_into_kitchen(session, kitchen_id, new_item)
+            if needs_thumbnail:
+                new_item_ids.append(item_id)
         
         session.commit()
         add_items_to_kitchen_history(kitchen_id, [item['name'].strip().lower() for item in items], session)
+        session.commit()
 
-        # Fire background thumbnail generation for new items without thumbnails
         if new_item_ids:
             t = threading.Thread(
                 target=generate_thumbnails_background,

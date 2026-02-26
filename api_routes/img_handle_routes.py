@@ -1,6 +1,6 @@
 """
-UPDATED Image Handling Routes
-Now uses Google Document AI + OpenAI for SUPERIOR receipt scanning
+Image Handling Routes
+Uses OpenAI Vision (GPT-4o) for receipt scanning
 """
 
 from flask_jwt_extended import jwt_required, get_jwt_identity, get_jwt
@@ -109,32 +109,28 @@ def store_scan_history(user_id, scanned_items):
 @jwt_required()
 def scan_recipt_r():
     """
-    NEW ADVANCED RECEIPT SCANNING with TWO MODES
-    Uses Google Document AI + OpenAI GPT-4 OR OpenAI Vision directly
-    
+    Receipt scanning using OpenAI Vision (GPT-4o).
+
     Request Parameters (form-data):
-    - file: Receipt image (required)
+    - file:     Receipt image — png, jpg, or jpeg (required)
     - currency: Currency code (optional, default: USD)
-    - country: Country code (optional, default: USA)  
-    - use_google_document: "true" or "false" (optional, default: "true")
-      * "true" = Google Document AI + OpenAI Enhancement
-      * "false" = OpenAI Vision Direct Analysis
-    
+    - country:  Country name (optional, default: USA)
+
     Returns:
     {
         "success": true,
-        "mode": "Google Document AI" or "OpenAI Vision",
-        "merchant": "Store Name",
+        "mode": "OpenAI Vision",
+        "merchant": "Unknown",
         "total_items": 10,
         "items": [...]
     }
     """
-    print("🔍 Advanced Receipt Scanning Request Incoming...")
+    print("🔍 Receipt Scanning Request Incoming...")
 
     user_identity = get_jwt()
     user_id = user_identity['user_id']
 
-    # Check if user is host or co-host
+    # Only hosts or co-hosts can scan receipts
     if not user_is_host_or_cohost(user_id):
         return jsonify({
             'error': 'You are not authorized to scan receipts. Only hosts or co-hosts can perform this action.'
@@ -160,57 +156,53 @@ def scan_recipt_r():
         # Get optional parameters
         currency = request.form.get('currency', 'USD').upper()
         country = request.form.get('country', 'USA').upper()
-        use_google_document = request.form.get('use_google_document', 'true').lower() == 'true'
-        
+
         print(f"   Currency: {currency}, Country: {country}")
-        print(f"   Mode: {'Google Document AI' if use_google_document else 'OpenAI Vision'}")
-        
+        print(f"   Mode: OpenAI Vision")
+
         # Save file temporarily
         filename = secure_filename(file.filename)
         unique_filename = f"{uuid.uuid4().hex}_{filename}"
         file_path = os.path.join(UPLOAD_FOLDER, unique_filename)
         file.save(file_path)
-        
+
         print(f"   Saved to: {file_path}")
 
         # Read image bytes
         with open(file_path, 'rb') as f:
             image_bytes = f.read()
-        
+
         # Detect MIME type
-        mime_type = 'image/jpeg'
-        if filename.lower().endswith('.png'):
-            mime_type = 'image/png'
-        
-        # NEW: Use advanced scanner with mode selection
+        mime_type = 'image/png' if filename.lower().endswith('.png') else 'image/jpeg'
+
+        # Scan with OpenAI Vision
         scanner = get_advanced_scanner()
         result = scanner.scan_receipt(
             image_bytes=image_bytes,
             mime_type=mime_type,
             currency=currency,
-            country=country,
-            use_google_document=use_google_document
+            country=country
         )
-        
+
         # Clean up temp file
         os.remove(file_path)
         print(f"   Cleaned up: {file_path}")
-        
+
         if not result['success']:
             return jsonify({
                 'error': f"Scanning failed: {result.get('error', 'Unknown error')}"
             }), 400
-        
+
         # Store in scan history
         items_list = result['items']
         store_scan_history(user_id, items_list)
-        
+
         print(f"✅ Successfully scanned {result['total_items']} items")
-        
+
         return jsonify({
             'message': 'Receipt successfully scanned!',
             'success': True,
-            'mode': 'Google Document AI' if use_google_document else 'OpenAI Vision',
+            'mode': 'OpenAI Vision',
             'merchant': result.get('merchant', 'Unknown'),
             'currency': currency,
             'total_items': result['total_items'],
@@ -218,13 +210,12 @@ def scan_recipt_r():
             'metadata': result.get('metadata', {}),
             'scan_timestamp': result.get('scan_timestamp')
         }), 200
-        
+
     except Exception as e:
         print(f"❌ Scanning error: {str(e)}")
-        # Clean up file if it exists
         if 'file_path' in locals() and os.path.exists(file_path):
             os.remove(file_path)
-        
+
         return jsonify({
             'error': f'Error scanning receipt: {str(e)}',
             'success': False

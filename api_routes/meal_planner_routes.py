@@ -5,10 +5,127 @@ import uuid
 
 # PostgreSQL imports
 from db_connection import get_session
-from models import Kitchen, KitchenMember, MealPlan, GeneratedRecipe
+from models import Kitchen, KitchenItem, KitchenMember, MealPlan, GeneratedRecipe
 
 # Create a Blueprint object
 meal_planner_blueprint = Blueprint('meal_planner_blueprint', __name__)
+
+
+# ============================================================
+# SHARED HELPER: Dynamic missing items recalculation
+# Same logic as list_fav — checks current inventory against
+# recipe ingredients and returns an up-to-date missing list.
+# Scoped to the specific kitchen the meal plan belongs to.
+# ============================================================
+
+def _build_inventory_lookup(session, kitchen_id: int) -> dict:
+    """
+    Build a normalized name → item dict of all inventory items
+    for a given kitchen. Used for missing-items recalculation.
+    """
+    kitchen_items = session.query(KitchenItem).filter(
+        KitchenItem.kitchen_id == kitchen_id
+    ).all()
+
+    available = {}
+    for item in kitchen_items:
+        normalized = item.name.lower().strip()
+        available[normalized] = {
+            'name': item.name,
+            'quantity': item.quantity,
+            'unit': item.unit
+        }
+    return available
+
+
+def _normalize_ingredient_name(name: str) -> str:
+    """
+    Normalize an ingredient name for flexible matching.
+    Strips common descriptors, lowercases, and removes simple plurals.
+    """
+    if not name:
+        return ""
+    normalized = name.lower().strip()
+    descriptors = ['fresh', 'frozen', 'dried', 'canned', 'raw',
+                   'cooked', 'chopped', 'sliced', 'diced']
+    for desc in descriptors:
+        normalized = normalized.replace(desc, '').strip()
+    # Simple plural stripping
+    if normalized.endswith('es'):
+        normalized = normalized[:-2]
+    elif normalized.endswith('s') and len(normalized) > 3:
+        normalized = normalized[:-1]
+    return normalized
+
+
+def _is_ingredient_available(ingredient_name: str, available_items: dict) -> bool:
+    """
+    Check if an ingredient is available in the inventory lookup.
+    Supports direct match and partial / substring matching.
+    """
+    normalized_query = _normalize_ingredient_name(ingredient_name)
+
+    if normalized_query in available_items:
+        return True
+
+    for available_name in available_items.keys():
+        if available_name in normalized_query:
+            return True
+        if normalized_query in available_name:
+            return True
+
+    return False
+
+
+def _recalculate_missing_items(ingredients: list, available_items: dict) -> tuple:
+    """
+    Given a recipe's ingredients list and the current inventory lookup,
+    return (has_missing: bool, missing_items_list: list).
+    """
+    missing = []
+    for ingredient in (ingredients or []):
+        name = ingredient.get('name', '')
+        if not _is_ingredient_available(name, available_items):
+            missing.append({
+                'name': name,
+                'amount': ingredient.get('amount', ''),
+                'unit': ingredient.get('unit', '')
+            })
+    return (len(missing) > 0, missing)
+
+
+def _serialize_meal_plan(plan: MealPlan, available_items: dict) -> dict:
+    """
+    Serialize a MealPlan row to a response dict with dynamically
+    recalculated missing_items and missing_items_list.
+    """
+    has_missing, missing_list = _recalculate_missing_items(
+        plan.ingredients, available_items
+    )
+    return {
+        '_id': str(plan.id),
+        'meal_plan_id': plan.meal_plan_id,
+        'kitchen_id': str(plan.kitchen_id),
+        'created_by': str(plan.created_by),
+        'date': plan.date,
+        'date_obj': plan.date_obj.isoformat() if plan.date_obj else None,
+        'meal_type': plan.meal_type,
+        'recipe_id': str(plan.recipe_id),
+        'title': plan.title,
+        'calories': plan.calories,
+        'cooking_time': plan.cooking_time,
+        'thumbnail': plan.thumbnail,
+        'ingredients': plan.ingredients,
+        'cooking_steps': plan.cooking_steps,
+        'missing_items': has_missing,                # ✅ dynamically recalculated
+        'missing_items_list': missing_list,           # ✅ dynamically recalculated
+        'recipe_short_summary': plan.recipe_short_summary,
+        'notes': plan.notes,
+        'is_completed': plan.is_completed,
+        'completed_at': plan.completed_at.isoformat() if plan.completed_at else None,
+        'created_at': plan.created_at.isoformat() if plan.created_at else None,
+        'updated_at': plan.updated_at.isoformat() if plan.updated_at else None
+    }
 
 
 @meal_planner_blueprint.route('/api/meal_plan/create', methods=['POST'])
@@ -185,33 +302,13 @@ def list_meal_plans():
         # Fetch meal plans
         meal_plans = query.order_by(MealPlan.date_obj.asc()).all()
         
-        # Convert to dict
-        meal_plans_list = []
-        for plan in meal_plans:
-            meal_plans_list.append({
-                '_id': str(plan.id),
-                'meal_plan_id': plan.meal_plan_id,
-                'kitchen_id': str(plan.kitchen_id),
-                'created_by': str(plan.created_by),
-                'date': plan.date,
-                'date_obj': plan.date_obj.isoformat() if plan.date_obj else None,
-                'meal_type': plan.meal_type,
-                'recipe_id': str(plan.recipe_id),
-                'title': plan.title,
-                'calories': plan.calories,
-                'cooking_time': plan.cooking_time,
-                'thumbnail': plan.thumbnail,
-                'ingredients': plan.ingredients,
-                'cooking_steps': plan.cooking_steps,
-                'missing_items': plan.missing_items,
-                'missing_items_list': plan.missing_items_list,
-                'recipe_short_summary': plan.recipe_short_summary,
-                'notes': plan.notes,
-                'is_completed': plan.is_completed,
-                'completed_at': plan.completed_at.isoformat() if plan.completed_at else None,
-                'created_at': plan.created_at.isoformat() if plan.created_at else None,
-                'updated_at': plan.updated_at.isoformat() if plan.updated_at else None
-            })
+        # Build inventory lookup for dynamic missing-items recalculation
+        available_items = _build_inventory_lookup(session, kitchen_id)
+
+        # Serialize with dynamically recalculated missing items
+        meal_plans_list = [
+            _serialize_meal_plan(plan, available_items) for plan in meal_plans
+        ]
         
         return jsonify({'meal_plans': meal_plans_list}), 200
 
@@ -265,33 +362,13 @@ def get_meal_plans_by_date():
             MealPlan.date == date
         ).order_by(MealPlan.meal_type.asc()).all()
         
-        # Convert to dict
-        meals_list = []
-        for plan in meal_plans:
-            meals_list.append({
-                '_id': str(plan.id),
-                'meal_plan_id': plan.meal_plan_id,
-                'kitchen_id': str(plan.kitchen_id),
-                'created_by': str(plan.created_by),
-                'date': plan.date,
-                'date_obj': plan.date_obj.isoformat() if plan.date_obj else None,
-                'meal_type': plan.meal_type,
-                'recipe_id': str(plan.recipe_id),
-                'title': plan.title,
-                'calories': plan.calories,
-                'cooking_time': plan.cooking_time,
-                'thumbnail': plan.thumbnail,
-                'ingredients': plan.ingredients,
-                'cooking_steps': plan.cooking_steps,
-                'missing_items': plan.missing_items,
-                'missing_items_list': plan.missing_items_list,
-                'recipe_short_summary': plan.recipe_short_summary,
-                'notes': plan.notes,
-                'is_completed': plan.is_completed,
-                'completed_at': plan.completed_at.isoformat() if plan.completed_at else None,
-                'created_at': plan.created_at.isoformat() if plan.created_at else None,
-                'updated_at': plan.updated_at.isoformat() if plan.updated_at else None
-            })
+        # Build inventory lookup for dynamic missing-items recalculation
+        available_items = _build_inventory_lookup(session, kitchen_id)
+
+        # Serialize with dynamically recalculated missing items
+        meals_list = [
+            _serialize_meal_plan(plan, available_items) for plan in meal_plans
+        ]
         
         return jsonify({
             'date': date,

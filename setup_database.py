@@ -42,11 +42,11 @@ def verify_tables():
     
     expected_tables = [
         'users', 'kitchens', 'kitchen_members', 'kitchen_items',
-        'pantries', 'generated_recipes',  # ← Removed recipe_ingredients
+        'pantries', 'generated_recipes',
         'favourite_recipes', 'meal_plans', 'my_lists', 'invitations',
         'scan_history', 'kitchen_consumption_patterns', 'consumption_events',
         'consumption_usage_events', 'pending_confirmations', 'consumption_baselines',
-        'kitchen_items_history'  # ← Add this (it exists!)
+        'kitchen_items_history', 'item_add_requests'
     ]
     
     missing_tables = []

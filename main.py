@@ -74,6 +74,7 @@ from utils.scheduler import ConsumptionScheduler
 from utils.consumption_baselines import populate_baselines_to_db
 from api_routes.consumption_prediction_routes import consumption_prediction_blueprint
 from api_routes.smart_kitchen_setup_routes import smart_kitchen_setup_blueprint
+from api_routes.item_request_routes import item_request_blueprint
 import atexit
 
 app = Flask(__name__)
@@ -111,6 +112,7 @@ app.register_blueprint(meal_planner_blueprint)
 app.register_blueprint(expiring_items_recipe_blueprint)
 app.register_blueprint(consumption_prediction_blueprint) 
 app.register_blueprint(smart_kitchen_setup_blueprint)
+app.register_blueprint(item_request_blueprint)
 
 # ADD THESE LINES FOR AUTO SWAGGER UI
 SWAGGER_URL = '/docs'
@@ -391,6 +393,120 @@ def swagger_json():
                 }],
                 'tags': ['Kitchen Inventory'],
                 'security': [{'Bearer': []}]
+            }
+        },
+
+        # ── Item Add Request workflow ───────────────────────────────────────────
+        '/api/kitchen/request_add_items': {
+            'POST': {
+                'summary': 'Request to add items (any member)',
+                'description': (
+                    'Any kitchen member submits items for the host/co-host to review. '
+                    'Each item becomes a pending request visible via /api/kitchen/item_requests. '
+                    'The host/co-host approves or rejects each request via '
+                    '/api/kitchen/respond_to_item_request.'
+                ),
+                'parameters': [{
+                    'name': 'body',
+                    'in': 'body',
+                    'required': True,
+                    'schema': {
+                        'type': 'object',
+                        'required': ['kitchen_id', 'items'],
+                        'properties': {
+                            'kitchen_id': {'type': 'integer', 'example': 1},
+                            'items': {
+                                'type': 'array',
+                                'items': {
+                                    'type': 'object',
+                                    'required': ['name'],
+                                    'properties': {
+                                        'name':        {'type': 'string', 'example': 'tomato'},
+                                        'quantity':    {'type': 'number', 'example': 5},
+                                        'unit':        {'type': 'string', 'example': 'kg'},
+                                        'group':       {'type': 'string', 'example': 'vegetables'},
+                                        'expiry_date': {'type': 'string', 'example': '7 days'},
+                                        'thumbnail':   {'type': 'string', 'example': 'data:image/png;base64,...'}
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }],
+                'tags': ['Kitchen Inventory'],
+                'security': [{'Bearer': []}],
+                'responses': {
+                    '201': {'description': 'Requests submitted — awaiting host approval'},
+                    '400': {'description': 'Validation error'},
+                    '403': {'description': 'Not a member of this kitchen'},
+                    '404': {'description': 'Kitchen not found'}
+                }
+            }
+        },
+        '/api/kitchen/item_requests': {
+            'GET': {
+                'summary': 'List item add requests for a kitchen',
+                'description': (
+                    'Host/co-host: all requests, filterable by status (default: pending). '
+                    'Regular member: their own requests only.'
+                ),
+                'parameters': [
+                    {
+                        'name': 'kitchen_id',
+                        'in': 'query',
+                        'required': True,
+                        'type': 'integer',
+                        'description': 'Kitchen ID'
+                    },
+                    {
+                        'name': 'status',
+                        'in': 'query',
+                        'required': False,
+                        'type': 'string',
+                        'enum': ['pending', 'approved', 'rejected', 'all'],
+                        'default': 'pending',
+                        'description': 'Filter by request status'
+                    }
+                ],
+                'tags': ['Kitchen Inventory'],
+                'security': [{'Bearer': []}],
+                'responses': {
+                    '200': {'description': 'List of item requests with requester details'},
+                    '403': {'description': 'Not a member of this kitchen'},
+                    '404': {'description': 'Kitchen not found'}
+                }
+            }
+        },
+        '/api/kitchen/respond_to_item_request': {
+            'POST': {
+                'summary': 'Approve or reject an item add request (host/co-host only)',
+                'description': (
+                    'On approval the item is immediately inserted into the kitchen inventory '
+                    '(quantity is merged if the item already exists). '
+                    'On rejection the request is closed and the inventory is unchanged.'
+                ),
+                'parameters': [{
+                    'name': 'body',
+                    'in': 'body',
+                    'required': True,
+                    'schema': {
+                        'type': 'object',
+                        'required': ['request_id', 'action'],
+                        'properties': {
+                            'request_id':    {'type': 'string', 'example': 'abc123def456'},
+                            'action':        {'type': 'string', 'enum': ['approved', 'rejected'], 'example': 'approved'},
+                            'reject_reason': {'type': 'string', 'example': 'We already have enough of this.', 'description': 'Optional — shown to requester on rejection'}
+                        }
+                    }
+                }],
+                'tags': ['Kitchen Inventory'],
+                'security': [{'Bearer': []}],
+                'responses': {
+                    '200': {'description': 'Request processed successfully'},
+                    '403': {'description': 'Only host or co-host can respond'},
+                    '404': {'description': 'Request not found'},
+                    '409': {'description': 'Request already processed'}
+                }
             }
         },
         '/api/kitchen/remove_items': {

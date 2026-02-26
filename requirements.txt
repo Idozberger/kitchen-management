@@ -36,8 +36,3 @@ python-dateutil
 gunicorn
 
 sendgrid
-
-google-cloud-documentai
-google-auth
-google-auth-oauthlib
-google-auth-httplib2

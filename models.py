@@ -73,6 +73,7 @@ class Kitchen(Base):
     pending_confirmations = relationship('PendingConfirmation', back_populates='kitchen', cascade='all, delete-orphan')
     items_history = relationship('KitchenItemsHistory', back_populates='kitchen', uselist=False, cascade='all, delete-orphan')
     setup_sessions = relationship('KitchenSetupSession', back_populates='kitchen', cascade='all, delete-orphan')
+    item_add_requests = relationship('ItemAddRequest', back_populates='kitchen', cascade='all, delete-orphan')
     
     def __repr__(self):
         return f"<Kitchen(id={self.id}, name='{self.kitchen_name}')>"
@@ -529,3 +530,46 @@ class KitchenSetupSession(Base):
 
     def __repr__(self):
         return f"<KitchenSetupSession(id={self.id}, kitchen_id={self.kitchen_id}, status='{self.status}')>"
+
+
+# ============================================
+# ITEM ADD REQUEST MODEL
+# ============================================
+class ItemAddRequest(Base):
+    __tablename__ = 'item_add_requests'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    request_id = Column(String(32), unique=True, nullable=False, index=True)  # UUID hex
+    kitchen_id = Column(Integer, ForeignKey('kitchens.id', ondelete='CASCADE'), nullable=False, index=True)
+    requested_by = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
+
+    # Item fields — mirrors KitchenItem
+    name = Column(String(255), nullable=False)
+    quantity = Column(Float, nullable=False, default=1.0)
+    unit = Column(String(50), nullable=False, default='count')
+    group = Column(String(100), nullable=False, default='pantry')
+    thumbnail = Column(Text, nullable=True)       # base64 if provided by requester
+    expiry_date = Column(String(50), nullable=True)
+
+    # Workflow fields
+    status = Column(String(20), nullable=False, default='pending', index=True)
+    # 'pending' | 'approved' | 'rejected'
+
+    reviewed_by = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+    reject_reason = Column(String(500), nullable=True)
+
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
+    reviewed_at = Column(DateTime(timezone=True), nullable=True)
+
+    # Relationships
+    kitchen = relationship('Kitchen', back_populates='item_add_requests')
+    requester = relationship('User', foreign_keys=[requested_by])
+    reviewer = relationship('User', foreign_keys=[reviewed_by])
+
+    __table_args__ = (
+        Index('idx_item_request_kitchen_status', 'kitchen_id', 'status'),
+        Index('idx_item_request_user', 'requested_by', 'status'),
+    )
+
+    def __repr__(self):
+        return f"<ItemAddRequest(id={self.id}, item='{self.name}', status='{self.status}')>"
