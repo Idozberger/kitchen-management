@@ -907,7 +907,6 @@ def swagger_json():
                 'security': [{'Bearer': []}]
             }
         },
-
         '/api/recipe/<recipe_id>': {
             'GET': {
                 'parameters': [{
