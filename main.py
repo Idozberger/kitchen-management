@@ -908,7 +908,7 @@ def swagger_json():
             }
         },
 
-        '/api/recipe/{recipe_id}': {
+        '/api/recipe/<recipe_id>': {
             'GET': {
                 'parameters': [{
                     'name': 'recipe_id',
