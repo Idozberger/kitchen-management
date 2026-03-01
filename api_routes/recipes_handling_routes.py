@@ -427,3 +427,66 @@ def list_fav_r():
         return jsonify({'error': str(e)}), 500
     finally:
         session.close()
+
+@recipes_handling_blueprint.route('/api/recipe/<recipe_id>', methods=['GET'])
+@jwt_required()
+def get_recipe_by_id(recipe_id):
+    """
+    Fetch a single generated recipe by its ID.
+
+    URL Parameter:
+        recipe_id (int): The ID of the recipe to fetch.
+
+    Returns:
+        {
+            "_id": "1",
+            "title": "...",
+            "calories": "...",
+            "cooking_time": "...",
+            "ingredients": [...],
+            "recipe_short_summary": "...",
+            "cooking_steps": [...],
+            "missing_items": false,
+            "missing_items_list": [...],
+            "thumbnail": "...",
+            "expiring_items_used": [...],
+            "expiring_items_count": 0,
+            "created_at": "..."
+        }
+    """
+    session = get_session()
+    try:
+        # Validate recipe_id
+        try:
+            recipe_id = int(recipe_id)
+        except (ValueError, TypeError):
+            return jsonify({'error': 'Invalid recipe_id. Must be an integer.'}), 400
+
+        # Fetch the recipe from DB
+        recipe = session.query(GeneratedRecipe).filter(
+            GeneratedRecipe.id == recipe_id
+        ).first()
+
+        if not recipe:
+            return jsonify({'error': f'Recipe with id {recipe_id} not found.'}), 404
+
+        return jsonify({
+            '_id': str(recipe.id),
+            'title': recipe.title,
+            'calories': recipe.calories,
+            'cooking_time': recipe.cooking_time,
+            'ingredients': recipe.ingredients,
+            'recipe_short_summary': recipe.recipe_short_summary,
+            'cooking_steps': recipe.cooking_steps,
+            'missing_items': recipe.missing_items,
+            'missing_items_list': recipe.missing_items_list,
+            'thumbnail': recipe.thumbnail,
+            'expiring_items_used': recipe.expiring_items_used,
+            'expiring_items_count': recipe.expiring_items_count,
+            'created_at': recipe.created_at.isoformat() if recipe.created_at else None
+        }), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        session.close()
