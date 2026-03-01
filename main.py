@@ -907,6 +907,21 @@ def swagger_json():
                 'security': [{'Bearer': []}]
             }
         },
+
+        '/api/recipe/{recipe_id}': {
+            'GET': {
+                'parameters': [{
+                    'name': 'recipe_id',
+                    'in': 'path',
+                    'required': True,
+                    'type': 'string',
+                    'example': '42',
+                    'description': 'ID of the recipe to fetch'
+                }],
+                'tags': ['Recipes'],
+                'security': [{'Bearer': []}]
+            }
+        },
         '/api/kitchen/mark_recipe_finished': {
             'POST': {
                 'parameters': [{
