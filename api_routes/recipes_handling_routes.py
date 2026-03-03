@@ -111,7 +111,53 @@ def generate_recipes_r():
             
             # Use the completed recipes with thumbnails
             ai_generated_recipes['recipes'] = completed_recipes
-            
+            # ============================================
+            # SERVER-SIDE MISSING ITEMS RECALCULATION
+            # Overrides whatever the AI returned.
+            # When inventory is empty, ALL ingredients become missing.
+            # ============================================
+
+            # Build normalized lookup from actual inventory
+            available_items_lookup = {}
+            for item in available_ingredients:
+                normalized = item.name.lower().strip()
+                available_items_lookup[normalized] = True
+
+            def normalize_ingredient_name(name):
+                if not name:
+                    return ""
+                normalized = name.lower().strip()
+                descriptors = ['fresh', 'frozen', 'dried', 'canned', 'raw', 'cooked', 'chopped', 'sliced', 'diced']
+                for desc in descriptors:
+                    normalized = normalized.replace(desc, '').strip()
+                if normalized.endswith('es'):
+                    normalized = normalized[:-2]
+                elif normalized.endswith('s') and len(normalized) > 3:
+                    normalized = normalized[:-1]
+                return normalized
+
+            def is_ingredient_available(ingredient_name):
+                normalized_query = normalize_ingredient_name(ingredient_name)
+                if normalized_query in available_items_lookup:
+                    return True
+                for available_name in available_items_lookup.keys():
+                    if available_name in normalized_query or normalized_query in available_name:
+                        return True
+                return False
+
+            for recipe in ai_generated_recipes['recipes']:
+                recipe_ingredients = recipe.get('ingredients', [])
+                recalculated_missing = []
+                for ingredient in recipe_ingredients:
+                    ingredient_name = ingredient.get('name', '')
+                    if not is_ingredient_available(ingredient_name):
+                        recalculated_missing.append({
+                            'name': ingredient_name,
+                            'amount': ingredient.get('amount', ''),
+                            'unit': ingredient.get('unit', '')
+                        })
+                recipe['missing_items_list'] = recalculated_missing
+                recipe['missing_items'] = len(recalculated_missing) > 0
             # Insert generated recipes into the database
             recipe_objects = []
             for recipe_data in ai_generated_recipes['recipes']:
