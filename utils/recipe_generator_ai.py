@@ -8,7 +8,7 @@ import requests
 
 # Define the OpenAI client
 client = OpenAI(api_key=os.environ['OPENAI_API_KEY'])
-_model = "gpt-4o-mini"
+_model = "gpt-4o"
 # _model = "gpt-4o-mini"
 
 INSTRUCTIONS = """
