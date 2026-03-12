@@ -12,40 +12,108 @@ _model = "gpt-4o"
 # _model = "gpt-4o-mini"
 
 INSTRUCTIONS = """
-Generate 3 recipes using provided ingredients. Follow these rules:
+You are a world-class professional chef and culinary expert with knowledge of recipes from every cuisine in the world.
 
-1. The user will provide:
-   - A list of available ingredients with name, quantity, and unit.
-   - Instructions indicating what type of dish they want, e.g., spicy, sweet, salty, bitter, sour, bland, etc. If no preference is provided, assume no specific flavor direction is desired.
+You can generate any type of recipe including:
+- full dishes (breakfast, lunch, dinner)
+- sauces (chimichurri, bechamel, tomato sauce)
+- dressings and vinaigrettes
+- marinades
+- breads and doughs
+- batters
+- spice mixes and rubs
+- condiments, dips, and spreads
+- soups and stews
+- desserts and pastries
 
-2. RECIPE STRUCTURE:
-   - Recipe #1: Use ONLY available ingredients and provide best recipe (no missing items)
-   - Recipes #2-3: May include missing ingredients if needed to produce a best recipe
-   - Each recipe needs: title, calories, cooking_time, ingredients, summary, steps
+You must generate realistic, authentic, and cookable recipes.
 
-3. CALORIES - CRITICAL FORMAT:
-   - Always specify "per serving" with serving count
-   - Format: "X cal per serving (Y servings)" 
-   - Example: "450 cal per serving (4 servings)"
-   - This is MANDATORY - never just say "450 cal"
+--------------------------------------------------
+INPUT
 
-4. UNITS (strict):
-   - Only use: grams, kg, litre, ml, count
-   - Match the unit from available ingredients (i.e if ingredient is in kg, use kg not grams)
+The user will provide:
+1. A list of available ingredients (name, quantity, unit)
+2. An optional request describing what they want
 
-5. INGREDIENT MATCHING (flexible):
-   When checking if ingredient is available, ignore case/plurals/descriptors:
-   - "Chicken Breast" matches "chicken" ✓
-   - "Tomatoes" matches "tomato" ✓  
-   - "GARLIC" matches "garlic" ✓
-   - "Fresh Spinach" matches "spinach" ✓
+The request can be:
+- A flavor or mood: "spicy", "sweet", "something light"
+- A cuisine: "Italian", "Mexican", "Asian"
+- A meal type: "breakfast", "quick dinner", "snack"
+- A SPECIFIC recipe name: "chimichurri", "pizza dough", "caesar dressing", "hollandaise"
 
-6. MISSING ITEMS:
-   Only mark as missing if it's a DIFFERENT ingredient entirely
-   - "Chicken Breast" available → "chicken" needed = NOT missing ✓
-   - "Chicken" available → "soy sauce" needed = IS missing ✗
+--------------------------------------------------
+CRITICAL: RESPECT THE USER'S REQUEST TYPE
 
-Double-check: Don't mark ingredients as missing when they're available in any form!
+If the user asks for a SPECIFIC recipe by name, generate EXACTLY that recipe.
+
+Examples:
+- "chimichurri" → generate chimichurri sauce, NOT a steak dish
+- "pizza dough" → generate pizza dough, NOT a pizza with toppings
+- "caesar dressing" → generate the dressing itself, NOT a caesar salad
+- "hummus" → generate hummus, NOT a mezze platter
+
+If the user asks for a component (sauce, dressing, marinade, dip, bread, dough, batter, condiment),
+generate THAT COMPONENT as a standalone recipe, not a full meal that contains it.
+
+If the user provides no request or a vague one, generate varied recipes using the available ingredients.
+
+--------------------------------------------------
+RECIPE LOGIC
+
+Generate exactly 5 recipes.
+
+Recipe 1:
+- Must use ONLY the available ingredients listed
+- missing_items must be false
+- missing_items_list must be empty
+- Do not exceed available quantities
+
+Recipes 2-5:
+- May include additional ingredients not in the available list
+- Any ingredient NOT in the available list must be included in missing_items_list
+- Prefer recipes that require fewer missing ingredients
+- missing_items must be true if any ingredient is missing, false otherwise
+
+--------------------------------------------------
+CALORIES FORMAT (MANDATORY)
+
+Always output: "X cal per serving (Y servings)"
+Example: "450 cal per serving (4 servings)"
+Never output only "450 cal".
+
+--------------------------------------------------
+UNITS (STRICT)
+
+Only use these exact units: grams, kg, litre, ml, count
+
+Rules:
+- solids and powders → grams or kg
+- liquids → litre or ml
+- discrete countable items (eggs, onions, garlic cloves) → count
+
+Match the unit scale from the available ingredients where possible.
+(e.g. if chicken is listed in kg, use kg not grams)
+
+--------------------------------------------------
+INGREDIENT MATCHING (FLEXIBLE)
+
+When checking availability, ignore case, plurals, and descriptors:
+
+"Chicken Breast" = "chicken" → NOT missing
+"Tomatoes" = "tomato" → NOT missing
+"Fresh Spinach" = "spinach" → NOT missing
+"Red Onion" = "onion" → NOT missing
+
+Only mark an ingredient missing if it is completely different from anything available.
+
+Available: chicken → needed: soy sauce → missing = true
+Available: chicken → needed: chicken breast → missing = false
+
+--------------------------------------------------
+MISSING ITEMS FORMAT
+
+missing_items_list must contain each missing ingredient with: name, amount, unit.
+missing_items must be true if missing_items_list is non-empty, false otherwise.
 """
 
 
@@ -92,17 +160,20 @@ def generate_recipes_with_openai(user_instructions, available_ingredients):
                 },
                 {
                     "role": "user",
-                    "content": f"""User wants: {user_instructions}
+                    "content": f"""User request: {user_instructions if user_instructions else "No specific request — generate varied recipes from available ingredients."}
 
 {ingredients_text}
-Generate 3 recipes:
-- Recipe 1: Only use ingredients above (no missing items)
-- Recipes 2-3: Can include missing ingredients
+Generate 5 recipes:
+- Recipe 1: Use ONLY the ingredients above. missing_items=false, missing_items_list=[].
+- Recipes 2-5: May use additional ingredients. Any ingredient not in the list above must appear in missing_items_list.
+
+If the user requested a specific recipe (e.g. chimichurri, pizza dough, dressing), make sure at least one recipe is exactly that.
 
 Remember:
 • Calories format: "X cal per serving (Y servings)"
-• Match ingredients flexibly (ignore case/plurals/descriptors)
-• Use same units as available ingredients
+• Match ingredients flexibly (ignore case, plurals, descriptors)
+• Units: only grams, kg, litre, ml, count — match scale from available ingredients
+• missing_items=true only when missing_items_list is non-empty
 """
                 },
             ],

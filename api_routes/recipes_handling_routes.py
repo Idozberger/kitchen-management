@@ -536,3 +536,122 @@ def get_recipe_by_id(recipe_id):
         return jsonify({'error': str(e)}), 500
     finally:
         session.close()
+
+
+@recipes_handling_blueprint.route('/api/recipe/check_missing_ingredients', methods=['GET'])
+@jwt_required()
+def check_missing_ingredients():
+    """
+    Check whether a recipe has any missing ingredients against the current kitchen inventory.
+
+    Query Parameters:
+        recipe_id (int): The ID of the recipe to check.
+        kitchen_id (int): The ID of the kitchen to check inventory against.
+
+    Returns:
+        {
+            "has_missing_ingredients": true | false
+        }
+
+    Logic:
+        - Fetches the recipe and verifies it exists.
+        - Verifies the requesting user is a member or host of the given kitchen.
+        - Fetches the kitchen's current live inventory.
+        - Re-evaluates every recipe ingredient against the live inventory
+          (same normalization + partial-match logic used in /api/recipe/list_fav).
+        - Returns True if ANY ingredient is missing, False if ALL are available.
+    """
+    session = get_session()
+    try:
+        user_identity = get_jwt()
+        user_id = int(user_identity['user_id'])
+
+        # ── Validate query params ──────────────────────────────────────────
+        recipe_id_raw = request.args.get('recipe_id')
+        kitchen_id_raw = request.args.get('kitchen_id')
+
+        if not recipe_id_raw or not kitchen_id_raw:
+            return jsonify({'error': 'Both recipe_id and kitchen_id are required query parameters.'}), 400
+
+        try:
+            recipe_id = int(recipe_id_raw)
+        except (ValueError, TypeError):
+            return jsonify({'error': 'Invalid recipe_id. Must be an integer.'}), 400
+
+        try:
+            kitchen_id = int(kitchen_id_raw)
+        except (ValueError, TypeError):
+            return jsonify({'error': 'Invalid kitchen_id. Must be an integer.'}), 400
+
+        # ── Fetch recipe ───────────────────────────────────────────────────
+        recipe = session.query(GeneratedRecipe).filter(
+            GeneratedRecipe.id == recipe_id
+        ).first()
+
+        if not recipe:
+            return jsonify({'error': f'Recipe with id {recipe_id} not found.'}), 404
+
+        # ── Verify kitchen exists and user is authorized ───────────────────
+        kitchen = session.query(Kitchen).filter(Kitchen.id == kitchen_id).first()
+
+        if not kitchen:
+            return jsonify({'error': 'Kitchen not found.'}), 404
+
+        is_authorized = (
+            kitchen.host_id == user_id or
+            session.query(KitchenMember).filter(
+                KitchenMember.kitchen_id == kitchen_id,
+                KitchenMember.user_id == user_id,
+                KitchenMember.member_type.in_(['host', 'co-host', 'member'])
+            ).first() is not None
+        )
+
+        if not is_authorized:
+            return jsonify({'error': 'You are not a member of this kitchen.'}), 403
+
+        # ── Build live inventory lookup (same as list_fav logic) ───────────
+        kitchen_items = session.query(KitchenItem).filter(
+            KitchenItem.kitchen_id == kitchen_id
+        ).all()
+
+        available_items = {}
+        for item in kitchen_items:
+            normalized_name = item.name.lower().strip()
+            available_items[normalized_name] = True
+
+        # ── Normalization + matching helpers (mirrors list_fav exactly) ────
+        def normalize_ingredient_name(name):
+            if not name:
+                return ""
+            normalized = name.lower().strip()
+            descriptors = ['fresh', 'frozen', 'dried', 'canned', 'raw', 'cooked', 'chopped', 'sliced', 'diced']
+            for desc in descriptors:
+                normalized = normalized.replace(desc, '').strip()
+            if normalized.endswith('es'):
+                normalized = normalized[:-2]
+            elif normalized.endswith('s') and len(normalized) > 3:
+                normalized = normalized[:-1]
+            return normalized
+
+        def is_ingredient_available(ingredient_name):
+            normalized_query = normalize_ingredient_name(ingredient_name)
+            if normalized_query in available_items:
+                return True
+            for available_name in available_items.keys():
+                if available_name in normalized_query or normalized_query in available_name:
+                    return True
+            return False
+
+        # ── Cross-verify every ingredient against live inventory ───────────
+        recipe_ingredients = recipe.ingredients or []
+        has_missing = any(
+            not is_ingredient_available(ingredient.get('name', ''))
+            for ingredient in recipe_ingredients
+        )
+
+        return jsonify({'has_missing_ingredients': has_missing}), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        session.close()
