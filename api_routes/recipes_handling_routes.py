@@ -609,6 +609,11 @@ def check_missing_ingredients():
         if not is_authorized:
             return jsonify({'error': 'You are not a member of this kitchen.'}), 403
 
+        # ── If recipe has no missing ingredients at all, return false immediately ──
+        missing_items_list = recipe.missing_items_list or []
+        if not missing_items_list:
+            return jsonify({'has_missing_ingredients': False}), 200
+
         # ── Build live inventory lookup (same as list_fav logic) ───────────
         kitchen_items = session.query(KitchenItem).filter(
             KitchenItem.kitchen_id == kitchen_id
@@ -642,11 +647,11 @@ def check_missing_ingredients():
                     return True
             return False
 
-        # ── Cross-verify every ingredient against live inventory ───────────
-        recipe_ingredients = recipe.ingredients or []
+        # ── Only verify the originally missing ingredients against live inventory ──
+        # If ALL of them are now found in inventory → false, otherwise → true
         has_missing = any(
             not is_ingredient_available(ingredient.get('name', ''))
-            for ingredient in recipe_ingredients
+            for ingredient in missing_items_list
         )
 
         return jsonify({'has_missing_ingredients': has_missing}), 200
