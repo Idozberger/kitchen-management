@@ -872,9 +872,10 @@ def swagger_json():
                     'required': True,
                     'schema': {
                         'type': 'object',
-                        'required': ['_id'],
+                        'required': ['_id', 'kitchen_id'],
                         'properties': {
-                            '_id': {'type': 'string', 'example': '507f1f77bcf86cd799439011'}
+                            '_id': {'type': 'integer', 'example': 1, 'description': 'Recipe ID'},
+                            'kitchen_id': {'type': 'integer', 'example': 1, 'description': 'Kitchen ID the user belongs to'}
                         }
                     }
                 }],
@@ -902,7 +903,14 @@ def swagger_json():
         },
         '/api/recipe/list_fav': {
             'GET': {
-                'parameters': [],
+                'parameters': [{
+                    'name': 'kitchen_id',
+                    'in': 'query',
+                    'required': True,
+                    'type': 'integer',
+                    'description': 'Kitchen ID to scope the inventory check against',
+                    'example': 1
+                }],
                 'tags': ['Recipes'],
                 'security': [{'Bearer': []}]
             }
