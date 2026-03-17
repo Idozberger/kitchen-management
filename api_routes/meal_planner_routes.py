@@ -77,30 +77,42 @@ def _is_ingredient_available(ingredient_name: str, available_items: dict) -> boo
     return False
 
 
-def _recalculate_missing_items(ingredients: list, available_items: dict) -> tuple:
+def _recalculate_missing_items(missing_items_list: list, available_items: dict) -> tuple:
     """
-    Given a recipe's ingredients list and the current inventory lookup,
-    return (has_missing: bool, missing_items_list: list).
+    Given a recipe's original missing_items_list and the current inventory lookup,
+    return (has_missing: bool, updated_missing_items_list: list).
+
+    Only the ingredients the AI originally flagged as missing are re-verified
+    against live inventory. If the list is empty the recipe was complete at
+    generation time and we return False immediately without any lookup.
     """
-    missing = []
-    for ingredient in (ingredients or []):
+    # Recipe had no missing ingredients when generated — trust the AI, skip lookup
+    if not missing_items_list:
+        return (False, [])
+
+    # Re-verify only the originally-missing ingredients against current inventory
+    still_missing = []
+    for ingredient in missing_items_list:
         name = ingredient.get('name', '')
         if not _is_ingredient_available(name, available_items):
-            missing.append({
+            still_missing.append({
                 'name': name,
                 'amount': ingredient.get('amount', ''),
                 'unit': ingredient.get('unit', '')
             })
-    return (len(missing) > 0, missing)
+    return (len(still_missing) > 0, still_missing)
 
 
 def _serialize_meal_plan(plan: MealPlan, available_items: dict) -> dict:
     """
     Serialize a MealPlan row to a response dict with dynamically
     recalculated missing_items and missing_items_list.
+
+    Only ingredients in the stored missing_items_list are re-checked —
+    the AI's judgment on available ingredients is trusted at generation time.
     """
     has_missing, missing_list = _recalculate_missing_items(
-        plan.ingredients, available_items
+        plan.missing_items_list or [], available_items
     )
     return {
         '_id': str(plan.id),
