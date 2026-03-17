@@ -216,18 +216,42 @@ def add_to_fav_r():
         user_identity = get_jwt()
         data = request.get_json()
 
-        # Check if _id (recipe ID) is provided
+        # Validate required fields
         if not data or '_id' not in data:
             return jsonify({'error': 'Missing recipe "_id" in request body'}), 400
+        if 'kitchen_id' not in data:
+            return jsonify({'error': 'Missing "kitchen_id" in request body'}), 400
 
         recipe_id = data['_id']
         user_id = int(user_identity['user_id'])
 
-        # Validate recipe_id (now an integer)
+        # Validate recipe_id
         try:
             recipe_id = int(recipe_id)
         except (ValueError, TypeError):
             return jsonify({'error': f'Invalid recipe _id: {recipe_id}.'}), 400
+
+        # Validate kitchen_id
+        try:
+            kitchen_id = int(data['kitchen_id'])
+        except (ValueError, TypeError):
+            return jsonify({'error': 'Invalid kitchen_id. Must be an integer.'}), 400
+
+        # Verify kitchen exists and user is a member
+        kitchen = session.query(Kitchen).filter(Kitchen.id == kitchen_id).first()
+        if not kitchen:
+            return jsonify({'error': 'Kitchen not found.'}), 404
+
+        is_member = (
+            kitchen.host_id == user_id or
+            session.query(KitchenMember).filter(
+                KitchenMember.kitchen_id == kitchen_id,
+                KitchenMember.user_id == user_id,
+                KitchenMember.member_type.in_(['host', 'co-host', 'member'])
+            ).first() is not None
+        )
+        if not is_member:
+            return jsonify({'error': 'You are not a member of this kitchen.'}), 403
 
         # Try to find the recipe in the generated_recipes table
         recipe = session.query(GeneratedRecipe).filter(
@@ -331,9 +355,32 @@ def list_fav_r():
     session = get_session()
     try:
         user_identity = get_jwt()
-
-        # Extract user_id from the JWT token
         user_id = int(user_identity['user_id'])
+
+        # Validate required kitchen_id query param
+        kitchen_id_raw = request.args.get('kitchen_id')
+        if not kitchen_id_raw:
+            return jsonify({'error': 'kitchen_id is required as a query parameter.'}), 400
+        try:
+            kitchen_id = int(kitchen_id_raw)
+        except (ValueError, TypeError):
+            return jsonify({'error': 'Invalid kitchen_id. Must be an integer.'}), 400
+
+        # Verify kitchen exists and user is a member
+        kitchen = session.query(Kitchen).filter(Kitchen.id == kitchen_id).first()
+        if not kitchen:
+            return jsonify({'error': 'Kitchen not found.'}), 404
+
+        is_member = (
+            kitchen.host_id == user_id or
+            session.query(KitchenMember).filter(
+                KitchenMember.kitchen_id == kitchen_id,
+                KitchenMember.user_id == user_id,
+                KitchenMember.member_type.in_(['host', 'co-host', 'member'])
+            ).first() is not None
+        )
+        if not is_member:
+            return jsonify({'error': 'You are not a member of this kitchen.'}), 403
 
         # Get the favourite recipes for the user
         favourites = session.query(FavouriteRecipe).filter(
@@ -354,102 +401,67 @@ def list_fav_r():
 
         # ============================================
         # DYNAMIC MISSING ITEMS RECALCULATION
+        # Scoped to the provided kitchen_id only.
+        # Only originally-missing ingredients are re-verified —
+        # the AI's judgment on available items is trusted.
         # ============================================
-        # Get all kitchens where user is host or member
-        user_kitchen_ids = set()
-        
-        # Kitchens where user is host
-        hosted_kitchens = session.query(Kitchen).filter(
-            Kitchen.host_id == user_id
+        kitchen_items = session.query(KitchenItem).filter(
+            KitchenItem.kitchen_id == kitchen_id
         ).all()
-        user_kitchen_ids.update([k.id for k in hosted_kitchens])
-        
-        # Kitchens where user is member
-        member_kitchens = session.query(KitchenMember).filter(
-            KitchenMember.user_id == user_id
-        ).all()
-        user_kitchen_ids.update([m.kitchen_id for m in member_kitchens])
-        
-        # Fetch ALL inventory items from user's kitchens
+
         available_items = {}
-        if user_kitchen_ids:
-            kitchen_items = session.query(KitchenItem).filter(
-                KitchenItem.kitchen_id.in_(list(user_kitchen_ids))
-            ).all()
-            
-            # Create a normalized lookup of available items
-            # Key: normalized item name (lowercase, stripped)
-            # Value: item details (for reference)
-            for item in kitchen_items:
-                normalized_name = item.name.lower().strip()
-                available_items[normalized_name] = {
-                    'name': item.name,
-                    'quantity': item.quantity,
-                    'unit': item.unit
-                }
-        
-        # Helper function to normalize and match ingredient names
+        for item in kitchen_items:
+            normalized_name = item.name.lower().strip()
+            available_items[normalized_name] = {
+                'name': item.name,
+                'quantity': item.quantity,
+                'unit': item.unit
+            }
+
         def normalize_ingredient_name(name):
-            """Normalize ingredient name for flexible matching"""
             if not name:
                 return ""
-            # Convert to lowercase, strip whitespace
             normalized = name.lower().strip()
-            # Remove common descriptors
             descriptors = ['fresh', 'frozen', 'dried', 'canned', 'raw', 'cooked', 'chopped', 'sliced', 'diced']
             for desc in descriptors:
                 normalized = normalized.replace(desc, '').strip()
-            # Handle plurals (simple approach)
             if normalized.endswith('es'):
                 normalized = normalized[:-2]
             elif normalized.endswith('s') and len(normalized) > 3:
                 normalized = normalized[:-1]
             return normalized
-        
+
         def is_ingredient_available(ingredient_name):
-            """Check if ingredient is available in inventory with flexible matching"""
             normalized_query = normalize_ingredient_name(ingredient_name)
-            
-            # Direct match
             if normalized_query in available_items:
                 return True
-            
-            # Partial match (ingredient contains available item or vice versa)
             for available_name in available_items.keys():
-                # Check if query contains available item
-                if available_name in normalized_query:
+                if available_name in normalized_query or normalized_query in available_name:
                     return True
-                # Check if available item contains query
-                if normalized_query in available_name:
-                    return True
-            
             return False
 
-        # Convert to list of dicts with _id as string for compatibility
-        # AND recalculate missing items dynamically
         fav_recipes_list = []
         for recipe in recipes:
-            # Get original ingredients list
-            recipe_ingredients = recipe.ingredients or []
-            
-            # Recalculate missing items based on current inventory
-            updated_missing_items_list = []
-            
-            for ingredient in recipe_ingredients:
-                ingredient_name = ingredient.get('name', '')
-                
-                # Check if this ingredient is available in current inventory
-                if not is_ingredient_available(ingredient_name):
-                    # Not available - add to missing items
-                    updated_missing_items_list.append({
-                        'name': ingredient_name,
-                        'amount': ingredient.get('amount', ''),
-                        'unit': ingredient.get('unit', '')
-                    })
-            
-            # Update missing_items flag
-            has_missing_items = len(updated_missing_items_list) > 0
-            
+            # Only re-verify ingredients the AI originally flagged as missing
+            original_missing = recipe.missing_items_list or []
+
+            if not original_missing:
+                # AI confirmed all ingredients were available at generation time
+                updated_missing_items_list = []
+                has_missing_items = False
+            else:
+                # Cross-check only the missing ones against current inventory
+                updated_missing_items_list = []
+                for ingredient in original_missing:
+                    ingredient_name = ingredient.get('name', '')
+                    if not is_ingredient_available(ingredient_name):
+                        updated_missing_items_list.append({
+                            'name': ingredient_name,
+                            'amount': ingredient.get('amount', ''),
+                            'unit': ingredient.get('unit', '')
+                        })
+                has_missing_items = len(updated_missing_items_list) > 0
+
             fav_recipes_list.append({
                 '_id': str(recipe.id),
                 'title': recipe.title,
@@ -458,15 +470,14 @@ def list_fav_r():
                 'ingredients': recipe.ingredients,
                 'recipe_short_summary': recipe.recipe_short_summary,
                 'cooking_steps': recipe.cooking_steps,
-                'missing_items': has_missing_items,  # ✅ Dynamically updated
-                'missing_items_list': updated_missing_items_list,  # ✅ Dynamically updated
+                'missing_items': has_missing_items,
+                'missing_items_list': updated_missing_items_list,
                 'thumbnail': recipe.thumbnail,
                 'expiring_items_used': recipe.expiring_items_used,
                 'expiring_items_count': recipe.expiring_items_count,
                 'available': True
             })
 
-        # Return the list of favorite recipes
         return jsonify({'favourite_recipes': fav_recipes_list}), 200
 
     except Exception as e:
