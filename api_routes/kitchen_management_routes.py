@@ -1684,7 +1684,8 @@ def update_item():
 @kitchen_management_blueprint.route('/api/kitchen/update_bucket_type', methods=['POST'])
 @jwt_required()
 def update_bucket_type():
-    """Move items between mylist and requested"""
+    """Move items between mylist and requested, skipping any whose name
+    already exists in the target bucket."""
     session = get_session()
     try:
         user_identity = get_jwt()
@@ -1722,19 +1723,77 @@ def update_bucket_type():
         
         if not is_authorized:
             return jsonify({'error': 'Unauthorized access'}), 403
-        
-        current_time = datetime.now(timezone.utc)
-        result = session.query(MyList).filter(
+
+        # ── Fetch the items being moved ──────────────────────────────────────
+        items_to_move = session.query(MyList).filter(
             MyList.kitchen_id == kitchen_id,
             MyList.item_id.in_(item_ids)
-        ).update({'bucket_type': new_type, 'modified_at': current_time}, synchronize_session=False)
-        
-        session.commit()
-        
-        return jsonify({
-            'message': f"{result} item(s) moved to {new_type}.",
-            'modified_count': result
-        }), 200
+        ).all()
+
+        if not items_to_move:
+            return jsonify({'error': 'No matching items found'}), 404
+
+        # ── Build normalised name set already present in the target bucket ───
+        existing_in_target = {
+            row[0].strip().lower()
+            for row in session.query(MyList.name).filter(
+                MyList.kitchen_id == kitchen_id,
+                MyList.bucket_type == new_type
+            ).all()
+        }
+
+        # ── Split into skipped vs safe-to-move ───────────────────────────────
+        skipped = []
+        move_ids = []
+
+        for item in items_to_move:
+            norm = item.name.strip().lower()
+            if norm in existing_in_target:
+                skipped.append({'item_id': item.item_id, 'name': item.name})
+            else:
+                move_ids.append(item.item_id)
+                # Add to set so two items with the same name in the request
+                # don't both get moved (first one wins)
+                existing_in_target.add(norm)
+
+        # ── Perform the bulk update only on safe items ───────────────────────
+        moved_count = 0
+        if move_ids:
+            current_time = datetime.now(timezone.utc)
+            moved_count = session.query(MyList).filter(
+                MyList.kitchen_id == kitchen_id,
+                MyList.item_id.in_(move_ids)
+            ).update({'bucket_type': new_type, 'modified_at': current_time},
+                     synchronize_session=False)
+            session.commit()
+
+        # ── Build response ───────────────────────────────────────────────────
+        response = {
+            'moved_count': moved_count,
+            'skipped_count': len(skipped),
+        }
+
+        if moved_count and not skipped:
+            response['message'] = f"{moved_count} item(s) moved to '{new_type}'."
+        elif moved_count and skipped:
+            skipped_names = ', '.join(i['name'] for i in skipped)
+            response['message'] = (
+                f"{moved_count} item(s) moved to '{new_type}'. "
+                f"{len(skipped)} item(s) skipped because they already exist "
+                f"in '{new_type}': {skipped_names}."
+            )
+        else:
+            skipped_names = ', '.join(i['name'] for i in skipped)
+            response['message'] = (
+                f"No items moved. All {len(skipped)} item(s) already exist "
+                f"in '{new_type}': {skipped_names}."
+            )
+
+        if skipped:
+            response['skipped_items'] = skipped
+
+        return jsonify(response), 200
+
     except Exception as e:
         session.rollback()
         return jsonify({'error': str(e)}), 500
@@ -1758,27 +1817,42 @@ def get_all_mylist_items():
         except (ValueError, TypeError):
             return jsonify({'error': 'Invalid kitchen ID'}), 400
         
+        # ── Single query: fetch kitchen and verify membership together ──────
         kitchen = session.query(Kitchen).filter(Kitchen.id == kitchen_id).first()
         if not kitchen:
             return jsonify({'error': 'Kitchen not found'}), 404
         
-        is_member = (
-            kitchen.host_id == user_id or
-            session.query(KitchenMember).filter(
+        if kitchen.host_id != user_id:
+            is_member = session.query(KitchenMember).filter(
                 KitchenMember.kitchen_id == kitchen_id,
                 KitchenMember.user_id == user_id
             ).first() is not None
-        )
+            if not is_member:
+                return jsonify({'error': 'You are not a member of this kitchen'}), 403
 
-        if not is_member:
-            return jsonify({'error': 'You are not a member of this kitchen'}), 403
-        
+        # ── Fetch list items ─────────────────────────────────────────────────
         query = session.query(MyList).filter(MyList.kitchen_id == kitchen_id)
         if bucket_type in ['requested', 'mylist', 'autogenerated_list']:
             query = query.filter(MyList.bucket_type == bucket_type)
         
         items = query.all()
-        
+
+        # ── Only fetch inventory names when autogenerated_list items may be
+        #    present (i.e. caller asked for them or fetched all bucket types) ─
+        needs_inventory = bucket_type in (None, '', 'autogenerated_list')
+        if needs_inventory:
+            inventory_names = {
+                row[0].strip().lower()
+                for row in session.query(KitchenItem.name).filter(
+                    KitchenItem.kitchen_id == kitchen_id
+                ).all()
+            }
+        else:
+            inventory_names = set()
+
+        # ── Compute now once, reuse across all items ─────────────────────────
+        now = datetime.now(timezone.utc)
+
         def calculate_expiry_status(created_at, expiry_date_str):
             if not created_at or not expiry_date_str:
                 return None
@@ -1801,8 +1875,7 @@ def get_all_mylist_items():
                 else:
                     return None
                 expiration_date = created_at + timedelta(days=days)
-                current_date = datetime.now(timezone.utc)
-                days_remaining = (expiration_date - current_date).days
+                days_remaining = (expiration_date - now).days
                 if days_remaining < 0:
                     return "expired"
                 elif days_remaining <= 2:
@@ -1833,26 +1906,8 @@ def get_all_mylist_items():
                 return "in_stock"
             except:
                 return "in_stock"
-        
-        # Build a normalised set of current inventory item names for this kitchen.
-        # Used to distinguish low_stock vs missing_ingredient in autogenerated_list.
-        inventory_names = {
-            inv.name.strip().lower()
-            for inv in session.query(KitchenItem).filter(
-                KitchenItem.kitchen_id == kitchen_id
-            ).all()
-        }
 
         def resolve_stock_status(item):
-            """
-            Return the correct stock_status for any list item.
-
-            - autogenerated_list: derive from source — 'low_stock' if the item
-              exists in the kitchen inventory (it was flagged as low), otherwise
-              'missing_ingredient' (it came from a meal-plan gap).
-            - All other bucket types: use the standard quantity-based calculation
-              against the list item's own quantity/unit fields.
-            """
             if item.bucket_type == 'autogenerated_list':
                 norm = item.name.strip().lower()
                 return 'low_stock' if norm in inventory_names else 'missing_ingredient'
@@ -1867,7 +1922,6 @@ def get_all_mylist_items():
             'quantity': item.quantity,
             'unit': item.unit,
             'bucket_type': item.bucket_type,
-            'thumbnail': item.thumbnail,
             'expiry_date': item.expiry_date,
             'created_at': item.created_at.isoformat() if item.created_at else None,
             'modified_at': item.modified_at.isoformat() if item.modified_at else None,
